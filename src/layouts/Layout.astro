@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="es">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Inventario</title>
+	</head>
+	<body>
+		<slot />
+	</body>
+</html>
+
+<style is:global>
+	:root {
+		color-scheme: light;
+		--color-page: #f3f1eb;
+		--color-surface: #fcfaf5;
+		--color-ink: #242b2a;
+		--color-muted: #485553;
+		--color-accent: #174f7a;
+		--color-accent-hover: #123e60;
+		--color-on-accent: #f9f7f1;
+		--color-border: #65716e;
+		--radius-panel: 14px;
+		--radius-field: 6px;
+		--radius-button: 5px;
+	}
+
+	*,
+	*::before,
+	*::after {
+		box-sizing: border-box;
+	}
+
+	html,
+	body {
+		min-height: 100%;
+		margin: 0;
+	}
+
+	body {
+		background: var(--color-page);
+		color: var(--color-ink);
+		font-family: 'Source Sans 3', 'Segoe UI', sans-serif;
+		font-size: 1rem;
+		line-height: 1.5;
+	}
+
+	button,
+	input {
+		font: inherit;
+	}
+
+	:focus-visible {
+		outline: 3px solid var(--color-accent);
+		outline-offset: 3px;
+	}
+
+	[hidden] {
+		display: none !important;
+	}
+</style>

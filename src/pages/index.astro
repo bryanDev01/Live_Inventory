@@ -1,0 +1,299 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout>
+	<main class="app-shell">
+		<section class="login-view" id="login-view" aria-labelledby="intro-title">
+			<div class="intro-panel">
+				<p class="section-label">Inventario privado</p>
+				<h1 id="intro-title">Tu inventario, con la tasa de referencia a la vista.</h1>
+				<p class="intro-copy">
+					Consulta los valores relacionados con la tasa de El Toque. Tú decides si cambias los precios de
+					venta.
+				</p>
+			</div>
+
+			<section class="access-panel" aria-labelledby="login-title">
+				<p class="section-label">Acceso</p>
+				<h2 id="login-title">Iniciar sesión</h2>
+				<p class="access-copy">Ingresa tu nombre y contraseña para ver el inventario.</p>
+
+				<form id="login-form" autocomplete="off" novalidate>
+					<div class="field-group">
+						<label for="user-name">Nombre</label>
+						<input id="user-name" type="text" autocomplete="off" />
+					</div>
+					<div class="field-group">
+						<label for="user-password">Contraseña</label>
+						<input id="user-password" type="password" autocomplete="off" />
+					</div>
+					<p class="prototype-note" id="prototype-note">
+						Prototipo visual. No se validan ni guardan los datos de acceso.
+					</p>
+					<button class="primary-button" type="submit">Entrar</button>
+				</form>
+			</section>
+		</section>
+
+		<section class="home-view" id="home-view" aria-labelledby="welcome-title" aria-live="polite" tabindex="-1" hidden>
+			<header class="home-header">
+				<div>
+					<p class="section-label">Inventario privado</p>
+					<h1 id="welcome-title">Bienvenido</h1>
+					<p class="home-copy">Tu información aparecerá aquí.</p>
+				</div>
+				<button class="secondary-button" id="return-button" type="button">Volver al acceso</button>
+			</header>
+
+			<section class="empty-state" aria-labelledby="empty-title">
+				<p class="section-label">Productos</p>
+				<h2 id="empty-title">Todavía no hay productos</h2>
+				<p>Esta maqueta no contiene datos reales.</p>
+			</section>
+		</section>
+	</main>
+
+	<script>
+		const loginForm = document.querySelector<HTMLFormElement>('#login-form');
+		const loginView = document.querySelector<HTMLElement>('#login-view');
+		const homeView = document.querySelector<HTMLElement>('#home-view');
+		const userName = document.querySelector<HTMLInputElement>('#user-name');
+		const returnButton = document.querySelector<HTMLButtonElement>('#return-button');
+
+		loginForm?.addEventListener('submit', (event) => {
+			event.preventDefault();
+			loginForm.reset();
+			if (loginView) loginView.hidden = true;
+			if (homeView) {
+				homeView.hidden = false;
+				homeView.focus();
+			}
+		});
+
+		returnButton?.addEventListener('click', () => {
+			if (homeView) homeView.hidden = true;
+			if (loginView) loginView.hidden = false;
+			userName?.focus();
+		});
+
+	</script>
+
+	<style>
+		.app-shell {
+			width: min(100% - 2rem, 70rem);
+			min-height: 100svh;
+			margin-inline: auto;
+		}
+
+		.login-view {
+			display: grid;
+			grid-template-columns: 1.08fr 0.92fr;
+			align-items: center;
+			gap: clamp(2rem, 7vw, 6rem);
+			min-height: 100svh;
+			padding-block: 3rem;
+		}
+
+		.intro-panel {
+			max-width: 38rem;
+			padding-block: 2rem;
+		}
+
+		.section-label {
+			margin: 0 0 0.65rem;
+			color: var(--color-accent);
+			font-size: 0.875rem;
+			font-weight: 700;
+			letter-spacing: 0.04em;
+		}
+
+		h1,
+		h2,
+		p {
+			margin-top: 0;
+		}
+
+		.intro-panel h1 {
+			max-width: 12ch;
+			margin-bottom: 1rem;
+			font-size: clamp(2.25rem, 4vw, 3.25rem);
+			letter-spacing: -0.03em;
+			line-height: 1.08;
+		}
+
+		.intro-copy,
+		.access-copy,
+		.home-copy,
+		.empty-state > p:last-child {
+			color: var(--color-muted);
+		}
+
+		.intro-copy {
+			max-width: 34rem;
+			margin-bottom: 0;
+			font-size: 1.125rem;
+		}
+
+		.access-panel,
+		.empty-state {
+			border: 1px solid var(--color-border);
+			border-radius: var(--radius-panel);
+			background: var(--color-surface);
+		}
+
+		.access-panel {
+			padding: clamp(1.5rem, 3vw, 2.25rem);
+		}
+
+		.access-panel h2,
+		.empty-state h2 {
+			margin-bottom: 0.5rem;
+			font-size: 1.5rem;
+			letter-spacing: -0.02em;
+			line-height: 1.2;
+		}
+
+		.access-copy {
+			margin-bottom: 1.5rem;
+		}
+
+		.field-group {
+			margin-bottom: 1rem;
+		}
+
+		label {
+			display: block;
+			margin-bottom: 0.4rem;
+			font-weight: 600;
+		}
+
+		input {
+			width: 100%;
+			min-height: 3rem;
+			padding: 0.65rem 0.75rem;
+			border: 1px solid var(--color-border);
+			border-radius: var(--radius-field);
+			background: var(--color-surface);
+			color: var(--color-ink);
+		}
+
+		input:focus-visible {
+			border-color: var(--color-accent);
+		}
+
+		.prototype-note {
+			margin-bottom: 1rem;
+			color: var(--color-muted);
+			font-size: 0.875rem;
+		}
+
+		.primary-button,
+		.secondary-button {
+			min-height: 3rem;
+			padding: 0.65rem 1rem;
+			border-radius: var(--radius-button);
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.primary-button {
+			width: 100%;
+			border: 1px solid var(--color-accent);
+			background: var(--color-accent);
+			color: var(--color-on-accent);
+		}
+
+		.primary-button:hover:not(:disabled) {
+			border-color: var(--color-accent-hover);
+			background: var(--color-accent-hover);
+		}
+
+		.secondary-button {
+			border: 1px solid var(--color-border);
+			background: var(--color-surface);
+			color: var(--color-ink);
+		}
+
+		.secondary-button:hover:not(:disabled) {
+			border-color: var(--color-accent);
+			color: var(--color-accent);
+		}
+
+		.primary-button:disabled,
+		.secondary-button:disabled {
+			cursor: not-allowed;
+			opacity: 0.65;
+		}
+
+		.home-view {
+			min-height: 100svh;
+			padding-block: clamp(2rem, 7vh, 5rem);
+		}
+
+		.home-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 1.5rem;
+			margin-bottom: 3rem;
+		}
+
+		.home-header h1 {
+			margin-bottom: 0.35rem;
+			font-size: clamp(2rem, 4vw, 2.75rem);
+			letter-spacing: -0.03em;
+			line-height: 1.1;
+		}
+
+		.home-copy {
+			margin-bottom: 0;
+		}
+
+		.empty-state {
+			max-width: 52rem;
+			min-height: 15rem;
+			padding: clamp(1.5rem, 4vw, 3rem);
+		}
+
+		.empty-state h2 {
+			margin-bottom: 0.5rem;
+		}
+
+		.empty-state > p:last-child {
+			margin-bottom: 0;
+		}
+
+		@media (max-width: 44rem) {
+			.app-shell {
+				width: min(100% - 1.5rem, 34rem);
+			}
+
+			.login-view {
+				grid-template-columns: 1fr;
+				align-content: center;
+				gap: 1.25rem;
+				padding-block: 1.5rem;
+			}
+
+			.intro-panel {
+				padding-block: 0;
+			}
+
+			.intro-panel h1 {
+				max-width: 16ch;
+				font-size: clamp(2rem, 9vw, 2.75rem);
+			}
+
+			.intro-copy {
+				font-size: 1rem;
+			}
+
+			.home-header {
+				align-items: flex-start;
+				flex-direction: column;
+				margin-bottom: 2rem;
+			}
+		}
+	</style>
+</Layout>
