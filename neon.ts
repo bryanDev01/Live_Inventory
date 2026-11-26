@@ -13,6 +13,8 @@ export default defineConfig({
       source: "./hello.ts",
       env: {
         ORIGIN_SECRET: { value: process.env.ORIGIN_SECRET, required: true },
+        REALTIME_URL: { value: process.env.NEON_REALTIME_URL, required: true },
+        REALTIME_SECRET: { value: process.env.NEON_REALTIME_SECRET, required: true },
       },
     },
   },
