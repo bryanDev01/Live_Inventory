@@ -383,7 +383,6 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		}
 
 		async function sendImport(mode: 'preview' | 'apply'): Promise<ImportResult> {
-			if (!session) throw new Error('Sin sesión');
 			if (!importFile?.files?.length) throw new Error('Elige un archivo primero');
 
 			const file = importFile.files[0];
@@ -513,7 +512,6 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		}
 
 		async function enablePush(): Promise<void> {
-			if (!session) throw new Error('Sin sesión');
 			if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
 				throw new Error('Este navegador no admite avisos en segundo plano.');
 			}
@@ -979,7 +977,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		productList?.addEventListener('click', async (event) => {
 			const target = event.target as HTMLElement;
 			const card = target.closest<HTMLElement>('.product-row');
-			if (!card || !session) return;
+			if (!card) return;
 
 			if (target.classList.contains('product-edit')) {
 				const product = currentProducts.find((item) => item.id === card.dataset.id);
