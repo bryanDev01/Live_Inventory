@@ -179,7 +179,7 @@ Formats, column mapping, templates, size limits, duplicate handling and how Word
 6. How scheduling is done: the host's cron, Neon Functions scheduled triggers, or `pg_cron` with scale to zero disabled.
 7. Authentication approach and how user accounts are created.
 8. Profit percentage: owner-confirmed (both shown, user chooses). See B.6.
-9. Currencies selectable per product.
+9. Currencies selectable per product: owner-confirmed USD only for now. The backend reads the allowed set from ALLOWED_CURRENCIES, never from a hardcoded list.
 10. Whether non-USD rate changes trigger notifications, and the minimum change that triggers one.
 11. Delivery mechanism (web push is assumed) and push requirements on Android and Windows.
 12. Excel and Word import details (formats, columns, duplicates, limits).

@@ -1,7 +1,7 @@
 import { attachDatabasePool } from "@neon/functions";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { Pool } from "pg";
-import { cupEquivalent, parseDecimal, profitPercent } from "./src/lib/money";
+import { cupEquivalent, formatRounded, parseDecimal, profitPercent } from "./src/lib/money";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -45,7 +45,7 @@ function corsHeaders(request: Request): Record<string, string> | null {
 	return {
 		"access-control-allow-origin": origin,
 		"access-control-allow-headers": "authorization, content-type",
-		"access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
+		"access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
 		"vary": "origin",
 	};
 }
@@ -132,7 +132,9 @@ function requiredAmount(body: Record<string, unknown>, key: string): string {
 	return value;
 }
 
-async function authenticate(request: Request): Promise<string | Failure> {
+type Identity = { sub: string; role: string };
+
+async function authenticate(request: Request): Promise<Identity | Failure> {
 	if (!jwks || !issuer) return { status: 500, body: { error: "Auth is not configured" } };
 
 	const header = request.headers.get("authorization");
@@ -158,17 +160,20 @@ async function authenticate(request: Request): Promise<string | Failure> {
 
 	// A database failure here is a service error, not a bad token.
 	try {
-		const { rowCount } = await pool.query(`select 1 from app_user where lower(email) = lower($1)`, [email]);
-		if (rowCount === 0) return { status: 403, body: { error: "Not allowed" } };
+		const { rows } = await pool.query<{ role: string }>(
+			`select role from app_user where lower(email) = lower($1) limit 1`,
+			[email],
+		);
+		const row = rows[0];
+		if (!row) return { status: 403, body: { error: "Not allowed" } };
+		return { sub: payload.sub, role: row.role };
 	} catch {
 		return { status: 503, body: { error: "Service unavailable" } };
 	}
-
-	return payload.sub;
 }
 
-function isFailure(value: string | Failure): value is Failure {
-	return typeof value !== "string";
+function isFailure(value: Identity | Failure): value is Failure {
+	return typeof value !== "object" || value === null || "status" in value;
 }
 
 type RateRow = {
@@ -184,7 +189,8 @@ type Rate = { cupPerUnit: string; source: string; observedAt: string; fetchedAt:
 function toRate(row: RateRow | undefined): Rate | null {
 	if (!row) return null;
 	return {
-		cupPerUnit: String(row.cup_per_unit),
+		// Two decimals everywhere, even though the column keeps more precision for history.
+		cupPerUnit: formatRounded(parseDecimal(String(row.cup_per_unit)), 2),
 		source: row.source,
 		observedAt: new Date(row.observed_at).toISOString(),
 		fetchedAt: new Date(row.fetched_at).toISOString(),
@@ -314,7 +320,14 @@ async function getRate(headers: Record<string, string>): Promise<Response> {
 	return json({ currency: REFERENCE_CURRENCY, rate: rates.get(REFERENCE_CURRENCY) ?? null }, 200, headers);
 }
 
-async function putRate(request: Request, headers: Record<string, string>): Promise<Response> {
+async function putRate(
+	request: Request,
+	headers: Record<string, string>,
+	identity: Identity,
+): Promise<Response> {
+	// Rate entry is server-side work: only the admin account changes it.
+	if (identity.role !== "admin") return json({ error: "Admin only" }, 403, headers);
+
 	const body = await readJson(request);
 	const cupPerUsd = requiredAmount(body, "cupPerUsd");
 	if (parseDecimal(cupPerUsd).n <= 0n) throw new ValidationError("cupPerUsd must be greater than zero");
@@ -364,11 +377,12 @@ async function createSession(request: Request, headers: Record<string, string>):
 	const key = name.toLowerCase();
 	if (isThrottled(key)) return json({ error: "Too many attempts" }, 429, headers);
 
-	const { rows } = await pool.query<{ email: string }>(
-		`select email from app_user where lower(name) = lower($1) limit 1`,
+	const { rows } = await pool.query<{ email: string; role: string }>(
+		`select email, role from app_user where lower(name) = lower($1) limit 1`,
 		[name],
 	);
-	const email = rows[0]?.email ?? null;
+	const account = rows[0] ?? null;
+	const email = account?.email ?? null;
 
 	// Always perform the sign-in call so an unknown name and a wrong password take similar time.
 	const attemptEmail = email ?? `unknown-${crypto.randomUUID()}@invalid.local`;
@@ -387,7 +401,7 @@ async function createSession(request: Request, headers: Record<string, string>):
 	const { token } = (await tokenResponse.json()) as { token?: string };
 	if (!token) return json({ error: "Could not issue a token" }, 502, headers);
 
-	return json({ token }, 200, headers);
+	return json({ token, role: account?.role ?? "user" }, 200, headers);
 }
 
 async function putSettings(request: Request, headers: Record<string, string>): Promise<Response> {
@@ -442,7 +456,7 @@ const handler = {
 			}
 			if (productMatch && request.method === "DELETE") return await deleteProduct(cors, productMatch[1]);
 			if (path === "/rate" && request.method === "GET") return await getRate(cors);
-			if (path === "/rate" && request.method === "PUT") return await putRate(request, cors);
+			if (path === "/rate" && request.method === "PUT") return await putRate(request, cors, auth);
 			if (path === "/settings" && request.method === "GET") return await getSettings(cors);
 			if (path === "/settings" && request.method === "PUT") return await putSettings(request, cors);
 
@@ -454,3 +468,4 @@ const handler = {
 };
 
 export default handler;
+
