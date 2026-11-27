@@ -836,7 +836,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 	<style>
 		.app-shell {
-			width: min(100% - 2rem, 72rem);
+			width: min(100% - 1rem, 104rem);
 			min-height: 100svh;
 			margin-inline: auto;
 		}
@@ -1063,6 +1063,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 		.products-panel {
 			padding-bottom: 1.75rem;
+			padding-inline: clamp(0.75rem, 1.5vw, 1.5rem);
 		}
 
 		.panel-heading {
@@ -1173,16 +1174,16 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			width: 100%;
 			border-collapse: collapse;
 			color: #151a19;
-			font-size: 0.9375rem;
+			font-size: 0.9rem;
 		}
 
 		.product-table th,
 		.product-table td {
-			padding: 0.6rem 0.75rem;
+			padding: 0.5rem 0.6rem;
 			text-align: left;
 			vertical-align: middle;
 			border-bottom: 1px solid var(--color-border);
-			white-space: nowrap;
+			white-space: normal;
 		}
 
 		.product-table th {
@@ -1228,6 +1229,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		.cell-number {
 			font-variant-numeric: tabular-nums;
 			color: #151a19;
+			white-space: nowrap;
 		}
 
 		.product-result.is-loss {
