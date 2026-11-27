@@ -9,16 +9,21 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
+    "test": "node --test src/lib/money.test.ts",
     "astro": "astro"
   },
   "dependencies": {
+    "@neon/auth": "^0.8.2",
     "@neon/config": "^1.14.8",
     "@neon/env": "^2.1.11",
     "@neon/functions": "^0.11.0",
     "@neon/realtime": "^0.2.2",
     "astro": "^7.4.13",
+    "jose": "^6.2.18",
+    "mammoth": "^1.13.0",
     "pg": "^8.23.1",
-    "ws": "^8.23.0"
+    "ws": "^8.23.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

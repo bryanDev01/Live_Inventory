@@ -123,13 +123,13 @@ The product is small and mainly visual. The owner will define the details gradua
 
 These are engineering rules for this project.
 
-- Never use binary floating point for money or rates. Use exact decimals (for example Postgres `numeric`) with an explicit rounding policy. Rounding and number of decimals: `[OPEN]`.
+- Never use binary floating point for money or rates. Use exact decimals (for example Postgres `numeric`) with an explicit rounding policy. Rounding: owner-confirmed 2026-11-26: 2 decimals, round half up. Money is handled in `src/lib/money.ts`.
 - Store El Toque values exactly as delivered, with the fetch timestamp and the period they refer to. Never overwrite history. It is needed for change detection and audit.
 - Store the currency of every price. USD is a default for new products, never a constant in code.
 - The conversion direction and the rate used for each calculation must be explicit in code and visible in the UI.
 - Store timestamps in UTC. The business time zone is `[OPEN]`.
 - Handle decimal and thousands separators explicitly in manual input and in imports. Never rely silently on locale defaults.
-- **Profit percentage formula: `[OPEN]`.** Margin over selling price, or markup over cost. Do not implement it until the owner confirms.
+- **Profit percentage formula: owner-confirmed 2026-11-26.** The app shows both margin over selling price and markup over cost, and the user chooses which one to see first. Both are computed in `src/lib/money.ts`.
 
 ## B.7 Scheduling and change detection
 
@@ -178,13 +178,13 @@ Formats, column mapping, templates, size limits, duplicate handling and how Word
 5. Neon plan, scale-to-zero setting and database driver (the driver depends on the host).
 6. How scheduling is done: the host's cron, Neon Functions scheduled triggers, or `pg_cron` with scale to zero disabled.
 7. Authentication approach and how user accounts are created.
-8. Profit percentage formula (margin or markup).
-9. Currencies selectable per product.
+8. Profit percentage: owner-confirmed (both shown, user chooses). See B.6.
+9. Currencies selectable per product: owner-confirmed USD, MLC, EUR and CUP (2026-11-27). No currency is preselected. The backend reads the allowed set from ALLOWED_CURRENCIES, never from a hardcoded list. CUP needs no conversion; other currencies need their own stored rate.
 10. Whether non-USD rate changes trigger notifications, and the minimum change that triggers one.
 11. Delivery mechanism (web push is assumed) and push requirements on Android and Windows.
 12. Excel and Word import details (formats, columns, duplicates, limits).
 13. Interface language.
-14. Business time zone, rounding policy and number of decimals.
+14. Business time zone. (Rounding and decimals are owner-confirmed: 2 decimals, half up.)
 15. Legibility standard and color-blind scope for the colors (see C.4).
 16. Whether the tools in Part D exist in the owner's workflow.
 17. `DESIGN.md`: not created yet (see C.1).
@@ -193,8 +193,17 @@ Formats, column mapping, templates, size limits, duplicate handling and how Word
 ## B.12 Current Neon setup scope (owner-confirmed, 2026-11-26)
 
 - The owner requested provisioning Postgres, Managed Auth, AI Gateway, Neon Functions and Realtime on the existing `production` branch. This authorizes service setup and service-level diagnostics; it does not decide the long-term hosting platform or make these services user-facing product features by itself.
-- The current login remains a visual prototype. Do not add sign-up, real sign-in, or account creation in this phase. The owner's future preference is to let users enter a name and password and resolve the name to an internal email in the backend; the identity mapping, account creation, and access-control policy remain `[OPEN]`.
+- Login is now real (owner-confirmed 2026-11-27): the user types a name and password, and the backend resolves the name to an internal email through `app_user`, then obtains a Neon Auth JWT. Accounts are created only for the known closed group. No public sign-up.
 - The current Neon Function is a secret-protected, read-only health probe. It must not return product data or expose any Neon secrets. Any future product API must authenticate and authorize before accessing user data.
+- Owner-confirmed 2026-11-27: the product phase is authorized. The core schema (`app_user`, `exchange_rate`, `product`, `app_setting`) exists on the `production` branch, and the `api` Function serves the authenticated inventory endpoints. Every request must carry a Neon Auth JWT whose email is mapped in `app_user`; unmapped users are rejected. The `hello` Function stays a read-only, secret-protected diagnostic and never returns product data.
+- Owner-confirmed 2026-11-27: while the El Toque API key is pending, the rate is entered manually and stored with `source = 'manual'`. No scraping of El Toque pages. The manual value is shown as manually entered, with its timestamp. Rate entry is restricted to the admin account; ordinary users never see the rate controls.
+- Import (owner-confirmed 2026-11-27): Excel or Word table with fixed columns: nombre, precio de compra, moneda de compra, precio de venta, moneda de venta. Always preview first, report errors per row, skip rows identical to an existing product, and insert only on explicit confirmation.
+- Operational note: `neon deploy` can serve a stale bundle for an existing function slug. If a code change does not appear, recreate the function or deploy it with `neon functions deploy <slug> --src <entry>`.
+- Owner-confirmed 2026-11-27: any signed-in user can create, edit (including prices and currencies) and delete products at any time. Product deletion is authorized by the owner; no approval step is required.
+- Owner-confirmed 2026-11-27: the product list shows a maximum of 15 products per page, with previous and next navigation.
+- Server protection: JSON request bodies are capped at 16 KB, except the import endpoint, which uses twice the configured import size. These caps exist to protect the service, not as product rules.
+- Import limits are configuration, not code: `IMPORT_MAX_MB`, `IMPORT_MAX_ROWS` and `IMPORT_MAX_UNCOMPRESSED_MB` (the last one guards against archives that expand far beyond their upload size). When unset or invalid, the import endpoint refuses with a configuration error.
+- Alerts (owner-confirmed 2026-11-27): every change of the USD rate creates a persisted alert for the whole group. The alert states the previous and new value and asks the user to review the prices; the selling price is never changed automatically. Alerts are shown inside the app and as a browser notification while the app is open. True background push needs a published HTTPS origin and VAPID keys, so it stays pending until hosting is decided.
 - The AI Gateway is used only to check its model catalog. Do not make model-inference calls or purchase credits without explicit authorization; no AI feature has been selected.
 - Realtime is provisioned and checked with a read-only `SELECT 1`. No product schema or browser live query is implemented. The current remote Realtime origin setting is inherited; do not add product queries or broaden it. A production frontend origin and any allowlist change remain `[OPEN]`.
 
