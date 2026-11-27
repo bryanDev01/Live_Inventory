@@ -204,18 +204,18 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 	<template id="product-template">
 		<tr class="product-row">
-			<td class="cell-name">
+			<td class="cell-name" data-label="Producto">
 				<span class="product-name"></span>
 				<span class="row-note"></span>
 			</td>
-			<td class="cell-number product-purchase"></td>
-			<td class="cell-number product-purchase-cup"></td>
-			<td class="cell-number product-sale"></td>
-			<td class="cell-number product-sale-cup"></td>
-			<td class="cell-number product-result"></td>
-			<td class="cell-number product-margin"></td>
-			<td class="cell-number product-markup"></td>
-			<td class="cell-actions">
+			<td class="cell-number product-purchase" data-label="Compra"></td>
+			<td class="cell-number product-purchase-cup" data-label="Compra en CUP"></td>
+			<td class="cell-number product-sale" data-label="Venta"></td>
+			<td class="cell-number product-sale-cup" data-label="Venta en CUP"></td>
+			<td class="cell-number product-result" data-label="Ganancia o pérdida"></td>
+			<td class="cell-number product-margin" data-label="Sobre la venta"></td>
+			<td class="cell-number product-markup" data-label="Sobre la compra"></td>
+			<td class="cell-actions" data-label="Acciones">
 				<button class="link-button product-edit" type="button">Editar</button>
 				<button class="link-button product-remove" type="button">Eliminar</button>
 			</td>
@@ -1589,6 +1589,108 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		}
 
 		@media (max-width: 52rem) {
+			/* The table becomes a stack of cards: nine columns do not fit on a phone. */
+			.table-wrap {
+				border: 0;
+				background: transparent;
+				overflow: visible;
+			}
+
+			.product-table,
+			.product-table tbody,
+			.product-row,
+			.product-table td {
+				display: block;
+				width: 100%;
+			}
+
+			.product-table thead {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				overflow: hidden;
+				clip: rect(0 0 0 0);
+				white-space: nowrap;
+			}
+
+			.product-row {
+				margin-bottom: 0.85rem;
+				border: 1px solid var(--color-border);
+				border-radius: var(--radius-panel);
+				background: var(--color-surface);
+				padding: 0.35rem 0;
+			}
+
+			.product-row:nth-child(even) td,
+			.product-row:hover td {
+				background: transparent;
+			}
+
+			.product-table td {
+				display: grid;
+				grid-template-columns: 1fr auto;
+				align-items: baseline;
+				gap: 0.75rem;
+				padding: 0.4rem 0.85rem;
+				border-bottom: 1px solid #e4ded2;
+				text-align: right;
+			}
+
+			.product-table td:last-child {
+				border-bottom: 0;
+			}
+
+			.product-table td[data-label]::before {
+				content: attr(data-label);
+				color: #3c4644;
+				font-size: 0.7rem;
+				font-weight: 700;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				text-align: left;
+			}
+
+			.cell-name {
+				display: block !important;
+				padding-top: 0.65rem;
+				text-align: left;
+			}
+
+			.cell-name::before {
+				display: none;
+			}
+
+			.product-name {
+				font-size: 1.05rem;
+			}
+
+			.cell-actions {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 0.5rem;
+				padding-bottom: 0.6rem;
+			}
+
+			.cell-actions::before {
+				display: none;
+			}
+
+			.cell-actions .link-button {
+				padding: 0.6rem 0.75rem;
+				border: 1px solid var(--color-border);
+				border-radius: var(--radius-button);
+				text-align: center;
+				text-decoration: none;
+			}
+
+			.cell-actions .link-button + .link-button {
+				margin-left: 0;
+			}
+
+			.pagination {
+				flex-wrap: wrap;
+			}
+
 			.content-grid {
 				grid-template-columns: 1fr;
 			}
