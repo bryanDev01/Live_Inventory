@@ -299,6 +299,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		let currencies: string[] = [];
 		let currentPage = 1;
 		let totalPages = 1;
+		let totalItems = 0;
 
 		function showError(element: HTMLElement | null, message: string) {
 			if (!element) return;
@@ -796,14 +797,17 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			renderRate(rateResponse.rate);
 			currentPage = productsResponse.page;
 			totalPages = productsResponse.pages;
+			totalItems = productsResponse.total;
 			renderProducts(productsResponse.products);
 			renderPagination();
 		}
 
 		function renderPagination() {
 			if (!pagination || !pageInfo || !prevPage || !nextPage) return;
-			pagination.hidden = totalPages <= 1;
-			pageInfo.textContent = `Página ${currentPage} de ${totalPages}`;
+			// The controls stay visible as soon as there is data, so the person always sees where they are.
+			pagination.hidden = totalItems === 0;
+			const label = totalItems === 1 ? '1 producto' : `${totalItems} productos`;
+			pageInfo.textContent = `Página ${currentPage} de ${totalPages} · ${label}`;
 			prevPage.disabled = currentPage <= 1;
 			nextPage.disabled = currentPage >= totalPages;
 		}
@@ -887,10 +891,36 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			}
 		});
 
-		// While the app is open, keep the alert list fresh and fire browser notifications.
-		setInterval(() => {
-			if (session) void loadAlerts().catch(() => {});
-		}, 60_000);
+		// Keep the screen current without a manual reload. Editing pauses the refresh so input is never lost.
+		const REFRESH_MS = 20_000;
+		let refreshing = false;
+
+		function isBusy(): boolean {
+			if (document.querySelector('.product-edit-form')) return true;
+			const active = document.activeElement as HTMLElement | null;
+			return Boolean(active && (active.tagName === 'INPUT' || active.tagName === 'SELECT'));
+		}
+
+		async function refreshQuietly(): Promise<void> {
+			if (refreshing) return;
+			if (document.visibilityState !== 'visible') return;
+			if (isBusy()) return;
+			refreshing = true;
+			try {
+				await loadData();
+				await loadAlerts();
+			} catch {
+				// A transient failure must not disturb the screen.
+			} finally {
+				refreshing = false;
+			}
+		}
+
+		setInterval(() => void refreshQuietly(), REFRESH_MS);
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'visible') void refreshQuietly();
+		});
+		window.addEventListener('focus', () => void refreshQuietly());
 
 		prevPage?.addEventListener('click', () => {
 			if (currentPage > 1) void loadData(currentPage - 1);
