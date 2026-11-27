@@ -335,7 +335,6 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		}
 
 		async function loadCurrencies() {
-			if (!session) return;
 			const result = await request<{ currencies: string[] }>('/currencies', {}, session?.token);
 			fillCurrencies(result.currencies);
 		}
@@ -596,7 +595,6 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		}
 
 		async function loadAlerts() {
-			if (!session) return;
 			const result = await request<{ alerts: Alert[]; unread: number }>('/alerts', {}, session?.token);
 			notifyNewAlerts(result.alerts);
 			renderAlerts(result.alerts);
@@ -748,7 +746,6 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				event.preventDefault();
 				const error = form.querySelector<HTMLElement>('.form-error');
 				if (error) error.hidden = true;
-				if (!session) return;
 
 				const payload = {
 					name: nameInput.value.trim(),
@@ -788,7 +785,6 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		type ProductPage = { products: Product[]; page: number; pageSize: number; total: number; pages: number };
 
 		async function loadData(page = currentPage) {
-			if (!session) return;
 			const [productsResponse, rateResponse, settingsResponse, currenciesResponse] = await Promise.all([
 				request<ProductPage>(`/products?page=${page}`, {}, session?.token),
 				request<{ currency: string; rate: Rate | null }>('/rate', {}, session?.token),
@@ -948,7 +944,6 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		productForm?.addEventListener('submit', async (event) => {
 			event.preventDefault();
 			clearErrors();
-			if (!session) return;
 
 			const data = new FormData(productForm);
 			const payload = {
