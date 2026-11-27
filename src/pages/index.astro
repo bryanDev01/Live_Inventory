@@ -65,7 +65,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 					</p>
 				</section>
 
-				<section class="panel" aria-labelledby="mode-title">
+				<section class="panel" id="mode-panel" aria-labelledby="mode-title" hidden>
 					<p class="section-label">Ganancia</p>
 					<h2 id="mode-title">Qué porcentaje ves primero</h2>
 					<p class="panel-copy">Los dos porcentajes se calculan siempre. Elige cuál quieres ver primero.</p>
@@ -119,6 +119,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				<p class="form-error" id="product-error" role="alert" hidden></p>
 
 				<p class="empty-state" id="products-empty">Todavía no hay productos.</p>
+				<p class="list-summary" id="list-summary" hidden></p>
 				<ul class="product-list" id="product-list"></ul>
 
 				<nav class="pagination" id="pagination" aria-label="Paginación de productos" hidden>
@@ -179,7 +180,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			<dl class="product-figures">
 				<div><dt>Compra</dt><dd class="product-purchase"></dd></div>
 				<div><dt>Venta</dt><dd class="product-sale"></dd></div>
-				<div class="figure-cup"><dt>Equivalente en CUP</dt><dd class="product-cup"></dd></div>
+				<div class="figure-cup"><dt>Compra en CUP</dt><dd class="product-purchase-cup"></dd></div>
+				<div class="figure-cup"><dt>Venta en CUP</dt><dd class="product-sale-cup"></dd></div>
 			</dl>
 			<p class="product-result"></p>
 			<div class="product-profit">
@@ -224,6 +226,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		const pageInfo = document.querySelector<HTMLElement>('#page-info');
 		const prevPage = document.querySelector<HTMLButtonElement>('#prev-page');
 		const nextPage = document.querySelector<HTMLButtonElement>('#next-page');
+		const listSummary = document.querySelector<HTMLElement>('#list-summary');
 		const productList = document.querySelector<HTMLUListElement>('#product-list');
 		const productsEmpty = document.querySelector<HTMLElement>('#products-empty');
 		const productCount = document.querySelector<HTMLElement>('#product-count');
@@ -388,6 +391,22 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			return `${value}%`;
 		}
 
+		function addCup(amounts: string[]): string {
+			let total = 0n;
+			for (const value of amounts) {
+				const negative = value.startsWith('-');
+				const clean = negative ? value.slice(1) : value;
+				const [whole, fraction = ''] = clean.split('.');
+				const cents = BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
+				total += negative ? -cents : cents;
+			}
+			const negativeTotal = total < 0n;
+			const absolute = negativeTotal ? -total : total;
+			const whole = absolute / 100n;
+			const fraction = String(absolute % 100n).padStart(2, '00');
+			return `${negativeTotal ? '-' : ''}${whole}.${fraction}`;
+		}
+
 		function formatTime(value: string): string {
 			return new Date(value).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' });
 		}
@@ -419,7 +438,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				node.querySelector('.product-name')!.textContent = product.name;
 				node.querySelector('.product-purchase')!.textContent = `${product.purchaseAmount} ${product.purchaseCurrency}`;
 				node.querySelector('.product-sale')!.textContent = `${product.saleAmount} ${product.saleCurrency}`;
-				node.querySelector('.product-cup')!.textContent = formatCup(product.cupEquivalent);
+				node.querySelector('.product-purchase-cup')!.textContent = formatCup(product.cupEquivalent);
+				node.querySelector('.product-sale-cup')!.textContent = formatCup(product.saleCupEquivalent ?? null);
 
 				const result = node.querySelector('.product-result')!;
 				if (product.profitCup !== null) {
@@ -449,6 +469,24 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				node.querySelector('.product-meta')!.textContent = meta.join(' ');
 
 				productList.append(node);
+			}
+
+			if (listSummary) {
+				const withProfit = products.filter((product) => product.profitCup !== null);
+				if (withProfit.length === 0) {
+					listSummary.hidden = products.length === 0;
+					listSummary.textContent = products.length === 0 ? '' : 'Sin tasa registrada: todavía no se puede calcular la ganancia.';
+				} else {
+					const total = addCup(withProfit.map((product) => product.profitCup as string));
+					const negative = total.startsWith('-');
+					const amount = negative ? total.slice(1) : total;
+					const missing = products.length - withProfit.length;
+					listSummary.hidden = false;
+					listSummary.textContent =
+						`En esta página: ${negative ? 'pérdida' : 'ganancia'} de ${amount} CUP` +
+						(missing > 0 ? `, ${missing} producto(s) sin tasa para calcular.` : '.');
+					listSummary.classList.toggle('is-loss', negative);
+				}
 			}
 		}
 
@@ -577,6 +615,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			if (welcomeTitle) welcomeTitle.textContent = `Hola, ${next.name}`;
 			const ratePanel = document.querySelector<HTMLElement>('#rate-panel');
 			if (ratePanel) ratePanel.hidden = next.role !== 'admin';
+			const modePanel = document.querySelector<HTMLElement>('#mode-panel');
+			if (modePanel) modePanel.hidden = next.role !== 'admin';
 			void loadData().catch(handleExpired);
 		}
 
@@ -1232,6 +1272,20 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			margin: 0;
 			color: var(--color-muted);
 			font-variant-numeric: tabular-nums;
+		}
+
+		.list-summary {
+			margin: 0 0 0.9rem;
+			padding: 0.6rem 0.75rem;
+			border-left: 3px solid var(--color-accent);
+			background: var(--color-page);
+			font-variant-numeric: tabular-nums;
+			font-weight: 600;
+		}
+
+		.list-summary.is-loss {
+			border-left-color: #8a2c1e;
+			color: #8a2c1e;
 		}
 
 		@media (max-width: 52rem) {
