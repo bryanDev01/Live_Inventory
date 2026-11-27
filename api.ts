@@ -181,7 +181,7 @@ function requiredAmount(body: Record<string, unknown>, key: string): string {
 	return value;
 }
 
-type Identity = { sub: string; role: string };
+type Identity = { sub: string; role: string; email: string };
 
 async function authenticate(request: Request): Promise<Identity | Failure> {
 	if (!jwks || !issuer) return { status: 500, body: { error: "Auth is not configured" } };
@@ -215,7 +215,7 @@ async function authenticate(request: Request): Promise<Identity | Failure> {
 		);
 		const row = rows[0];
 		if (!row) return { status: 403, body: { error: "Not allowed" } };
-		return { sub: payload.sub, role: row.role };
+		return { sub: payload.sub, role: row.role, email };
 	} catch {
 		return { status: 503, body: { error: "Service unavailable" } };
 	}
@@ -444,31 +444,50 @@ async function putRate(
 		}
 	}
 
-	// Uniqueness is enforced by the (currency, source, observed_at) constraint in
-	// db/migrations/001_core.sql, so a concurrent insert cannot create a duplicate.
+	// One statement: the rate and its alert are committed together or not at all.
+	// The previous CTE reads the snapshot from before this insert, so the comparison is exact.
 	const { rows } = await query<RateRow>(
-		`insert into exchange_rate (currency, cup_per_unit, source, observed_at)
-		 select $1, $2, 'manual', date_trunc('minute', now())
-		 on conflict (currency, source, observed_at) do nothing
-		 returning currency, cup_per_unit, source, observed_at, fetched_at`,
+		`with previous as (
+			select cup_per_unit from exchange_rate
+			where currency = $1
+			order by observed_at desc, fetched_at desc
+			limit 1
+		 ), inserted as (
+			insert into exchange_rate (currency, cup_per_unit, source, observed_at)
+			select $1, $2, 'manual', date_trunc('minute', now())
+			on conflict (currency, source, observed_at) do nothing
+			returning currency, cup_per_unit, source, observed_at, fetched_at
+		 ), raised as (
+			insert into rate_alert (currency, previous_rate, new_rate, direction)
+			select i.currency, p.cup_per_unit, i.cup_per_unit,
+				case
+					when p.cup_per_unit is null then 'first'
+					when i.cup_per_unit > p.cup_per_unit then 'up'
+					else 'down'
+				end
+			from inserted i left join previous p on true
+			where p.cup_per_unit is null or i.cup_per_unit <> p.cup_per_unit
+		 )
+		 select currency, cup_per_unit, source, observed_at, fetched_at from inserted`,
 		[REFERENCE_CURRENCY, cupPerUsd],
 	);
 
 	if (!rows[0]) {
-		// The row existed already: identical value means success, a different one is a real conflict.
-		const latest = await queryRead<RateRow>(
+		// The row already existed: identical value means success, a different one is a real conflict.
+		const existingRow = await queryRead<RateRow>(
 			`select currency, cup_per_unit, source, observed_at, fetched_at
 			 from exchange_rate where currency = $1 order by observed_at desc, fetched_at desc limit 1`,
 			[REFERENCE_CURRENCY],
 		);
-		const stored = latest.rows[0];
+		const stored = existingRow.rows[0];
 		if (stored && decimalEquals(parseDecimal(String(stored.cup_per_unit)), parseDecimal(cupPerUsd))) {
 			return json({ currency: REFERENCE_CURRENCY, rate: toRate(stored) }, 200, headers);
 		}
 		return json({ error: "A different rate was already recorded this minute" }, 409, headers);
 	}
 
-	return json({ currency: REFERENCE_CURRENCY, rate: toRate(rows[0]) }, 200, headers);
+	const saved = rows[0];
+	return json({ currency: REFERENCE_CURRENCY, rate: toRate(saved) }, 200, headers);
 }
 
 async function getSettings(headers: Record<string, string>): Promise<Response> {
@@ -801,6 +820,67 @@ async function importProducts(request: Request, headers: Record<string, string>)
 }
 
 
+type AlertRow = {
+	id: string;
+	currency: string;
+	previous_rate: string | null;
+	new_rate: string;
+	direction: string;
+	created_at: Date;
+	read: boolean;
+};
+
+async function listAlerts(identity: Identity, headers: Record<string, string>): Promise<Response> {
+	const { rows } = await queryRead<AlertRow>(
+		`select a.id, a.currency, a.previous_rate, a.new_rate, a.direction, a.created_at,
+		        (r.alert_id is not null) as read
+		 from rate_alert a
+		 left join rate_alert_read r on r.alert_id = a.id and lower(r.user_email) = lower($1)
+		 order by a.created_at desc, a.id desc
+		 limit 50`,
+		[identity.email],
+	);
+
+	const alerts = rows.map((row) => ({
+		id: row.id,
+		currency: row.currency,
+		previousRate: row.previous_rate === null ? null : formatRounded(parseDecimal(String(row.previous_rate)), 2),
+		newRate: formatRounded(parseDecimal(String(row.new_rate)), 2),
+		direction: row.direction,
+		createdAt: new Date(row.created_at).toISOString(),
+		read: row.read,
+	}));
+
+	return json({ alerts, unread: alerts.filter((alert) => !alert.read).length }, 200, headers);
+}
+
+async function markAlertsRead(
+	request: Request,
+	headers: Record<string, string>,
+	identity: Identity,
+): Promise<Response> {
+	const body = await readJson(request);
+
+	if (body.all === true) {
+		await query(
+			`insert into rate_alert_read (alert_id, user_email)
+			 select id, $1 from rate_alert
+			 on conflict do nothing`,
+			[identity.email],
+		);
+		return json({ ok: true }, 200, headers);
+	}
+
+	const id = requireString(body, "id");
+	if (!/^d+$/.test(id)) throw new ValidationError("Invalid alert id");
+	await query(
+		`insert into rate_alert_read (alert_id, user_email) values ($1::bigint, $2)
+		 on conflict do nothing`,
+		[id, identity.email],
+	);
+	return json({ ok: true }, 200, headers);
+}
+
 async function listCurrencies(headers: Record<string, string>): Promise<Response> {
 	return json({ currencies: allowedCurrencies }, 200, headers);
 }
@@ -838,6 +918,8 @@ const handler = {
 			if (path === "/settings" && request.method === "GET") return await getSettings(cors);
 			if (path === "/settings" && request.method === "PUT") return await putSettings(request, cors);
 			if (path === "/currencies" && request.method === "GET") return await listCurrencies(cors);
+			if (path === "/alerts" && request.method === "GET") return await listAlerts(auth, cors);
+			if (path === "/alerts/read" && request.method === "POST") return await markAlertsRead(request, cors, auth);
 			if (path === "/products/import" && request.method === "POST") return await importProducts(request, cors);
 
 			return json({ error: "Not found" }, 404, cors);
@@ -848,4 +930,5 @@ const handler = {
 };
 
 export default handler;
+
 

@@ -47,6 +47,20 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				<button class="secondary-button" id="logout-button" type="button">Salir</button>
 			</header>
 
+			<section class="panel alerts-panel" id="alerts-panel" aria-labelledby="alerts-title" hidden>
+				<div class="panel-heading">
+					<div>
+						<p class="section-label">Avisos</p>
+						<h2 id="alerts-title">Cambios en la tasa</h2>
+					</div>
+					<div class="alerts-actions">
+						<button class="secondary-button compact" id="enable-notifications" type="button" hidden>Activar avisos del navegador</button>
+						<button class="link-button" id="read-all" type="button">Marcar todas como leídas</button>
+					</div>
+				</div>
+				<ul class="alert-list" id="alert-list"></ul>
+			</section>
+
 			<div class="content-grid">
 				<section class="panel" id="rate-panel" aria-labelledby="rate-title" hidden>
 					<p class="section-label">Tasa de referencia</p>
@@ -222,6 +236,10 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		const rateSummary = document.querySelector<HTMLElement>('#rate-summary');
 		const rateStatus = document.querySelector<HTMLElement>('#rate-status');
 		const dayRate = document.querySelector<HTMLElement>('#day-rate');
+		const alertsPanel = document.querySelector<HTMLElement>('#alerts-panel');
+		const alertList = document.querySelector<HTMLUListElement>('#alert-list');
+		const readAllButton = document.querySelector<HTMLButtonElement>('#read-all');
+		const enableNotifications = document.querySelector<HTMLButtonElement>('#enable-notifications');
 		const rateForm = document.querySelector<HTMLFormElement>('#rate-form');
 		const rateValue = document.querySelector<HTMLInputElement>('#rate-value');
 		const rateError = document.querySelector<HTMLElement>('#rate-error');
@@ -441,6 +459,93 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			rateSummary.textContent = `1 USD = ${rate.cupPerUnit} CUP. Actualizada ${formatTime(rate.observedAt)}.`;
 		}
 
+		type Alert = {
+			id: string;
+			currency: string;
+			previousRate: string | null;
+			newRate: string;
+			direction: 'up' | 'down' | 'first';
+			createdAt: string;
+			read: boolean;
+		};
+
+		const LAST_ALERT_KEY = 'inventory-last-alert-id';
+
+		function alertMessage(alert: Alert): string {
+			if (alert.direction === 'first' || alert.previousRate === null) {
+				return `Tasa registrada: ${alert.newRate} CUP por 1 USD.`;
+			}
+			const verb = alert.direction === 'up' ? 'subió' : 'bajó';
+			return `La tasa ${verb} de ${alert.previousRate} a ${alert.newRate} CUP por 1 USD. Revisa tus precios.`;
+		}
+
+		function notifyNewAlerts(alerts: Alert[]) {
+			const maxId = alerts.reduce((max, alert) => Math.max(max, Number(alert.id)), 0);
+			const stored = localStorage.getItem(LAST_ALERT_KEY);
+
+			// First visit only records a baseline, so old alerts are not replayed as notifications.
+			if (stored === null) {
+				localStorage.setItem(LAST_ALERT_KEY, String(maxId));
+				return;
+			}
+
+			const fresh = alerts.filter((alert) => Number(alert.id) > Number(stored) && !alert.read);
+			if (fresh.length > 0 && 'Notification' in window && Notification.permission === 'granted') {
+				for (const alert of fresh.slice(0, 3)) {
+					new Notification('Cambio en la tasa', { body: alertMessage(alert), lang: 'es' });
+				}
+			}
+			localStorage.setItem(LAST_ALERT_KEY, String(maxId));
+		}
+
+		function renderAlerts(alerts: Alert[]) {
+			if (!alertsPanel || !alertList) return;
+
+			const unread = alerts.filter((alert) => !alert.read);
+			alertsPanel.hidden = unread.length === 0;
+			alertList.textContent = '';
+
+			for (const alert of unread) {
+				const item = document.createElement('li');
+				item.className = 'alert-item';
+
+				const text = document.createElement('p');
+				text.className = 'alert-text';
+				text.textContent = alertMessage(alert);
+
+				const meta = document.createElement('p');
+				meta.className = 'alert-meta';
+				meta.textContent = formatTime(alert.createdAt);
+
+				const button = document.createElement('button');
+				button.type = 'button';
+				button.className = 'link-button';
+				button.textContent = 'Marcar como leída';
+				button.addEventListener('click', () => void markAlertsRead(alert.id));
+
+				item.append(text, meta, button);
+				alertList.append(item);
+			}
+
+			if (readAllButton) readAllButton.hidden = unread.length === 0;
+			if (enableNotifications) {
+				enableNotifications.hidden = !('Notification' in window) || Notification.permission !== 'default';
+			}
+		}
+
+		async function loadAlerts() {
+			if (!session) return;
+			const result = await request<{ alerts: Alert[]; unread: number }>('/alerts', {}, session.token);
+			notifyNewAlerts(result.alerts);
+			renderAlerts(result.alerts);
+		}
+
+		async function markAlertsRead(id?: string) {
+			if (!session) return;
+			await request('/alerts/read', { method: 'POST', body: JSON.stringify(id ? { id } : { all: true }) }, session.token);
+			await loadAlerts();
+		}
+
 		function renderProducts(products: Product[]) {
 			if (!productList || !template || !productsEmpty || !productCount) return;
 
@@ -635,6 +740,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			if (loginView) loginView.hidden = true;
 			if (homeView) homeView.hidden = false;
 			if (welcomeTitle) welcomeTitle.textContent = `Hola, ${next.name}`;
+			void loadAlerts().catch(() => {});
 			const ratePanel = document.querySelector<HTMLElement>('#rate-panel');
 			if (ratePanel) ratePanel.hidden = next.role !== 'admin';
 			const modePanel = document.querySelector<HTMLElement>('#mode-panel');
@@ -688,6 +794,21 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		});
 
 		logoutButton?.addEventListener('click', leaveApp);
+
+		readAllButton?.addEventListener('click', () => {
+			void markAlertsRead().catch(() => {});
+		});
+
+		enableNotifications?.addEventListener('click', async () => {
+			if (!('Notification' in window)) return;
+			await Notification.requestPermission();
+			await loadAlerts().catch(() => {});
+		});
+
+		// While the app is open, keep the alert list fresh and fire browser notifications.
+		setInterval(() => {
+			if (session) void loadAlerts().catch(() => {});
+		}, 60_000);
 
 		prevPage?.addEventListener('click', () => {
 			if (currentPage > 1) void loadData(currentPage - 1);
@@ -1396,6 +1517,45 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		.empty-state {
 			margin-bottom: 0;
 			padding-block: 1rem;
+		}
+
+		.alerts-panel {
+			margin-bottom: 1.25rem;
+			border-left: 4px solid var(--color-accent);
+		}
+
+		.alerts-actions {
+			display: flex;
+			align-items: center;
+			gap: 0.9rem;
+		}
+
+		.alert-list {
+			display: grid;
+			gap: 0.6rem;
+			margin: 0;
+			padding: 0;
+			list-style: none;
+		}
+
+		.alert-item {
+			padding: 0.7rem 0.85rem;
+			border: 1px solid var(--color-border);
+			border-radius: var(--radius-field);
+			background: var(--color-page);
+			color: #151a19;
+		}
+
+		.alert-text {
+			margin: 0 0 0.2rem;
+			font-weight: 700;
+			color: #151a19;
+		}
+
+		.alert-meta {
+			margin: 0 0 0.35rem;
+			color: #3c4644;
+			font-size: 0.8125rem;
 		}
 
 		.pagination {
