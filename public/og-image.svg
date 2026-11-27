@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#f3f1eb"/>
+  <rect x="0" y="0" width="26" height="630" fill="#174f7a"/>
+  <text x="96" y="250" font-family="Segoe UI, Arial, sans-serif" font-size="96" font-weight="700" fill="#151a19" letter-spacing="-3">Inventario</text>
+  <text x="96" y="322" font-family="Segoe UI, Arial, sans-serif" font-size="34" fill="#3c4644">Tasa del día, productos y avisos</text>
+  <text x="96" y="560" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700" fill="#174f7a" letter-spacing="4">CUP POR 1 USD</text>
+</svg>
