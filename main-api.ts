@@ -881,7 +881,7 @@ function pushKeyResponse(headers: Record<string, string>): Response {
 async function subscribePush(
 	request: Request,
 	headers: Record<string, string>,
-	identity: Identity,
+	email: string,
 ): Promise<Response> {
 	const body = await readJson(request);
 	const endpoint = requireString(body, "endpoint");
@@ -896,7 +896,7 @@ async function subscribePush(
 		 values ($1, $2, $3, $4)
 		 on conflict (endpoint) do update
 		 set user_email = excluded.user_email, p256dh = excluded.p256dh, auth = excluded.auth`,
-		[identity.email, endpoint, p256dh, auth],
+		[email, endpoint, p256dh, auth],
 	);
 
 	return json({ ok: true }, 200, headers);
@@ -905,13 +905,13 @@ async function subscribePush(
 async function unsubscribePush(
 	request: Request,
 	headers: Record<string, string>,
-	identity: Identity,
+	email: string,
 ): Promise<Response> {
 	const body = await readJson(request);
 	const endpoint = requireString(body, "endpoint");
 	await query(`delete from push_subscription where endpoint = $1 and lower(user_email) = lower($2)`, [
 		endpoint,
-		identity.email,
+		email,
 	]);
 	return json({ ok: true }, 200, headers);
 }
@@ -926,7 +926,7 @@ type ProductAlertRow = {
 	read: boolean;
 };
 
-async function listAlerts(identity: Identity, headers: Record<string, string>): Promise<Response> {
+async function listAlerts(email: string | null, headers: Record<string, string>): Promise<Response> {
 	const { rows } = await queryRead<ProductAlertRow>(
 		`select a.id, a.product_name, a.profit_percent, a.profit_limit, a.rate, a.created_at,
 		        (r.alert_id is not null) as read
@@ -934,7 +934,7 @@ async function listAlerts(identity: Identity, headers: Record<string, string>): 
 		 left join product_alert_read r on r.alert_id = a.id and lower(r.user_email) = lower($1)
 		 order by a.created_at desc, a.id desc
 		 limit 50`,
-		[identity.email],
+		[email ?? ""],
 	);
 
 	const alerts = rows.map((row) => ({
@@ -953,8 +953,10 @@ async function listAlerts(identity: Identity, headers: Record<string, string>): 
 async function markAlertsRead(
 	request: Request,
 	headers: Record<string, string>,
-	identity: Identity,
+	email: string | null,
 ): Promise<Response> {
+	// Anonymous visitors track their read state in the browser.
+	if (!email) return json({ ok: true }, 200, headers);
 	const body = await readJson(request);
 
 	if (body.all === true) {
@@ -962,7 +964,7 @@ async function markAlertsRead(
 			`insert into product_alert_read (alert_id, user_email)
 			 select id, $1 from product_alert
 			 on conflict do nothing`,
-			[identity.email],
+			[email],
 		);
 		return json({ ok: true }, 200, headers);
 	}
@@ -972,7 +974,7 @@ async function markAlertsRead(
 	await query(
 		`insert into product_alert_read (alert_id, user_email) values ($1::bigint, $2)
 		 on conflict do nothing`,
-		[id, identity.email],
+		[id, email],
 	);
 	return json({ ok: true }, 200, headers);
 }
@@ -1044,8 +1046,18 @@ const handler = {
 			}
 		}
 
+		// The inventory is public: anyone with the URL can read and edit products.
+		// Only the rate and the profit-mode preference require the admin session.
 		const auth = await authenticate(request);
-		if (isFailure(auth)) return json(auth.body, auth.status, cors);
+		const identity = isFailure(auth) ? null : auth;
+		const adminOnly =
+			(path === "/rate" && request.method === "PUT") ||
+			(path === "/settings" && request.method === "PUT");
+
+		if (adminOnly) {
+			if (!identity) return json({ error: "Unauthorized" }, 401, cors);
+			if (identity.role !== "admin") return json({ error: "Admin only" }, 403, cors);
+		}
 
 		try {
 			if (path === "/products" && request.method === "GET") return await listProducts(request, cors);
@@ -1055,15 +1067,15 @@ const handler = {
 			}
 			if (productMatch && request.method === "DELETE") return await deleteProduct(cors, productMatch[1]);
 			if (path === "/rate" && request.method === "GET") return await getRate(cors);
-			if (path === "/rate" && request.method === "PUT") return await putRate(request, cors, auth);
+			if (path === "/rate" && request.method === "PUT") return await putRate(request, cors, identity!);
 			if (path === "/settings" && request.method === "GET") return await getSettings(cors);
 			if (path === "/settings" && request.method === "PUT") return await putSettings(request, cors);
 			if (path === "/currencies" && request.method === "GET") return await listCurrencies(cors);
-			if (path === "/alerts" && request.method === "GET") return await listAlerts(auth, cors);
-			if (path === "/alerts/read" && request.method === "POST") return await markAlertsRead(request, cors, auth);
+			if (path === "/alerts" && request.method === "GET") return await listAlerts(identity?.email ?? null, cors);
+			if (path === "/alerts/read" && request.method === "POST") return await markAlertsRead(request, cors, identity?.email ?? null);
 			if (path === "/push/key" && request.method === "GET") return pushKeyResponse(cors);
-			if (path === "/push/subscribe" && request.method === "POST") return await subscribePush(request, cors, auth);
-			if (path === "/push/unsubscribe" && request.method === "POST") return await unsubscribePush(request, cors, auth);
+			if (path === "/push/subscribe" && request.method === "POST") return await subscribePush(request, cors, identity?.email ?? "public");
+			if (path === "/push/unsubscribe" && request.method === "POST") return await unsubscribePush(request, cors, identity?.email ?? "public");
 			if (path === "/products/import" && request.method === "POST") return await importProducts(request, cors);
 
 			return json({ error: "Not found" }, 404, cors);
