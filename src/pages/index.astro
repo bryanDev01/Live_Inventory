@@ -54,7 +54,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 						<h2 id="alerts-title">Cambios en la tasa</h2>
 					</div>
 					<div class="alerts-actions">
-						<button class="secondary-button compact" id="enable-notifications" type="button" hidden>Activar avisos del navegador</button>
+						<button class="secondary-button compact" id="enable-notifications" type="button" hidden>Activar avisos en este dispositivo</button>
 						<button class="link-button" id="read-all" type="button">Marcar todas como leídas</button>
 					</div>
 				</div>
@@ -470,6 +470,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		};
 
 		const LAST_ALERT_KEY = 'inventory-last-alert-id';
+		let pushReady = false;
 
 		function alertMessage(alert: Alert): string {
 			if (alert.direction === 'first' || alert.previousRate === null) {
@@ -496,6 +497,56 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				}
 			}
 			localStorage.setItem(LAST_ALERT_KEY, String(maxId));
+		}
+
+		function urlBase64ToUint8Array(base64: string): Uint8Array {
+			const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+			const normalized = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+			const raw = atob(normalized);
+			const output = new Uint8Array(raw.length);
+			for (let index = 0; index < raw.length; index += 1) output[index] = raw.charCodeAt(index);
+			return output;
+		}
+
+		async function enablePush(): Promise<void> {
+			if (!session) throw new Error('Sin sesión');
+			if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+				throw new Error('Este navegador no admite avisos en segundo plano.');
+			}
+
+			const permission = await Notification.requestPermission();
+			if (permission !== 'granted') throw new Error('El permiso de avisos fue denegado.');
+
+			await navigator.serviceWorker.register('/sw.js');
+			const registration = await navigator.serviceWorker.ready;
+
+			const keyResponse = await request<{ key: string | null }>('/push/key', {}, session.token);
+			if (!keyResponse.key) throw new Error('Los avisos no están configurados en el servidor.');
+
+			let subscription = await registration.pushManager.getSubscription();
+			if (!subscription) {
+				subscription = await registration.pushManager.subscribe({
+					userVisibleOnly: true,
+					applicationServerKey: urlBase64ToUint8Array(keyResponse.key),
+				});
+			}
+
+			const json = subscription.toJSON();
+			if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+				throw new Error('El navegador no entregó una suscripción válida.');
+			}
+
+			await request(
+				'/push/subscribe',
+				{
+					method: 'POST',
+					body: JSON.stringify({ endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth }),
+				},
+				session.token,
+			);
+
+			pushReady = true;
+			if (enableNotifications) enableNotifications.hidden = true;
 		}
 
 		function renderAlerts(alerts: Alert[]) {
@@ -529,7 +580,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 			if (readAllButton) readAllButton.hidden = unread.length === 0;
 			if (enableNotifications) {
-				enableNotifications.hidden = !('Notification' in window) || Notification.permission !== 'default';
+				const supported = 'serviceWorker' in navigator && 'PushManager' in window;
+				enableNotifications.hidden = !supported || pushReady;
 			}
 		}
 
@@ -800,9 +852,11 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		});
 
 		enableNotifications?.addEventListener('click', async () => {
-			if (!('Notification' in window)) return;
-			await Notification.requestPermission();
-			await loadAlerts().catch(() => {});
+			try {
+				await enablePush();
+			} catch (error) {
+				alert(error instanceof Error ? error.message : 'No se pudieron activar los avisos.');
+			}
 		});
 
 		// While the app is open, keep the alert list fresh and fire browser notifications.
