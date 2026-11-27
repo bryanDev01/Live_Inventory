@@ -183,7 +183,7 @@ Formats, column mapping, templates, size limits, duplicate handling and how Word
 10. Whether non-USD rate changes trigger notifications, and the minimum change that triggers one.
 11. Delivery mechanism (web push is assumed) and push requirements on Android and Windows.
 12. Excel and Word import details (formats, columns, duplicates, limits).
-13. Interface language.
+13. Interface language: owner-confirmed Spanish. The owner asked for Spanish labels and every screen is written in Spanish.
 14. Business time zone. (Rounding and decimals are owner-confirmed: 2 decimals, half up.)
 15. Legibility standard and color-blind scope for the colors (see C.4).
 16. Whether the tools in Part D exist in the owner's workflow.
@@ -204,6 +204,7 @@ Formats, column mapping, templates, size limits, duplicate handling and how Word
 - Server protection: JSON request bodies are capped at 16 KB, except the import endpoint, which uses twice the configured import size. These caps exist to protect the service, not as product rules.
 - Import limits are configuration, not code: `IMPORT_MAX_MB`, `IMPORT_MAX_ROWS` and `IMPORT_MAX_UNCOMPRESSED_MB` (the last one guards against archives that expand far beyond their upload size). When unset or invalid, the import endpoint refuses with a configuration error.
 - Alerts (owner-confirmed 2026-11-27): every change of the USD rate creates a persisted alert for the whole group. The alert states the previous and new value and asks the user to review the prices; the selling price is never changed automatically. Alerts are shown inside the app and as a browser notification while the app is open. True background push needs a published HTTPS origin and VAPID keys, so it stays pending until hosting is decided.
+- Product profit limit (owner-confirmed 2026-11-27): every product has its own minimum profit over cost, stored in `product.profit_limit`, default 10%. When a rate change leaves a product at or below its limit, a `product_alert` row is created with its name, percentage and limit, and a push notification names that product. The rate-change alert was replaced by this flow; nothing mentions who changed the rate.
 - Web Push (implemented 2026-11-27): a service worker at `/sw.js` shows notifications while the app is closed. Subscriptions live in `push_subscription` with the device endpoint and keys. VAPID keys are Function environment variables. The trigger is the admin rate change; each rejected subscription (404 or 410) is deleted.
 - The AI Gateway is used only to check its model catalog. Do not make model-inference calls or purchase credits without explicit authorization; no AI feature has been selected.
 - Realtime is provisioned and checked with a read-only `SELECT 1`. No product schema or browser live query is implemented. The current remote Realtime origin setting is inherited; do not add product queries or broaden it. A production frontend origin and any allowlist change remain `[OPEN]`.
