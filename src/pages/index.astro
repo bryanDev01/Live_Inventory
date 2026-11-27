@@ -40,6 +40,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				<div>
 					<p class="section-label">Inventario privado</p>
 					<h1 id="welcome-title">Bienvenido</h1>
+					<p class="day-caption">Tasa del día</p>
+					<p class="day-rate" id="day-rate">Sin tasa</p>
 					<p class="home-copy" id="rate-summary">Cargando la tasa.</p>
 				</div>
 				<button class="secondary-button" id="logout-button" type="button">Salir</button>
@@ -49,7 +51,6 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				<section class="panel" id="rate-panel" aria-labelledby="rate-title" hidden>
 					<p class="section-label">Tasa de referencia</p>
 					<h2 id="rate-title">CUP por 1 USD</h2>
-					<p class="rate-figure" id="rate-figure">Sin tasa</p>
 					<p class="panel-copy" id="rate-status">Sin tasa registrada.</p>
 
 					<form id="rate-form" class="inline-form" novalidate>
@@ -220,7 +221,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		const welcomeTitle = document.querySelector<HTMLElement>('#welcome-title');
 		const rateSummary = document.querySelector<HTMLElement>('#rate-summary');
 		const rateStatus = document.querySelector<HTMLElement>('#rate-status');
-		const rateFigure = document.querySelector<HTMLElement>('#rate-figure');
+		const dayRate = document.querySelector<HTMLElement>('#day-rate');
 		const rateForm = document.querySelector<HTMLFormElement>('#rate-form');
 		const rateValue = document.querySelector<HTMLInputElement>('#rate-value');
 		const rateError = document.querySelector<HTMLElement>('#rate-error');
@@ -430,14 +431,14 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		function renderRate(rate: Rate | null) {
 			if (!rateStatus || !rateSummary) return;
 			if (!rate) {
-				if (rateFigure) rateFigure.textContent = 'Sin tasa';
+				if (dayRate) dayRate.textContent = 'Sin tasa';
 				rateStatus.textContent = 'Sin tasa registrada. Añade una para ver los equivalentes en CUP.';
 				rateSummary.textContent = 'Sin tasa de referencia.';
 				return;
 			}
-			if (rateFigure) rateFigure.textContent = rate.cupPerUnit;
-			rateStatus.textContent = `CUP por 1 USD. ${rate.source === 'manual' ? 'Ingresada manualmente' : 'Origen El Toque'}, ${formatTime(rate.observedAt)}.`;
-			rateSummary.textContent = `Tasa actual: ${rate.cupPerUnit} CUP por 1 USD.`;
+			if (dayRate) dayRate.textContent = `${rate.cupPerUnit} CUP`;
+			rateStatus.textContent = `${rate.cupPerUnit} CUP por 1 USD. ${rate.source === 'manual' ? 'Ingresada manualmente' : 'Origen El Toque'}, ${formatTime(rate.observedAt)}.`;
+			rateSummary.textContent = `1 USD = ${rate.cupPerUnit} CUP. Actualizada ${formatTime(rate.observedAt)}.`;
 		}
 
 		function renderProducts(products: Product[]) {
@@ -862,6 +863,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		}
 
 		.login-view {
+			max-width: 72rem;
+			margin-inline: auto;
 			display: grid;
 			grid-template-columns: 1.1fr 0.9fr;
 			align-items: center;
@@ -1033,10 +1036,19 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			margin-bottom: 0;
 		}
 
-		.rate-figure {
-			margin: 0.1rem 0 0.35rem;
+		.day-caption {
+			margin: 0.9rem 0 0.1rem;
+			color: #3c4644;
+			font-size: 0.8125rem;
+			font-weight: 700;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+		}
+
+		.day-rate {
+			margin: 0 0 0.35rem;
 			color: #151a19;
-			font-size: clamp(2.25rem, 5vw, 3.25rem);
+			font-size: clamp(2rem, 4vw, 2.75rem);
 			font-weight: 800;
 			letter-spacing: -0.03em;
 			line-height: 1;
