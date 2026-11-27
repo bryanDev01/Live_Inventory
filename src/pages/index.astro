@@ -99,12 +99,20 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 						<input id="product-name" name="name" type="text" required />
 					</div>
 					<div class="field-group">
-						<label for="product-purchase">Precio de compra (USD)</label>
+						<label for="product-purchase">Precio de compra</label>
 						<input id="product-purchase" name="purchaseAmount" type="text" inputmode="decimal" required />
 					</div>
 					<div class="field-group">
-						<label for="product-sale">Precio de venta (USD)</label>
+						<label for="product-purchase-currency">Moneda de compra</label>
+						<select id="product-purchase-currency" name="purchaseCurrency" required></select>
+					</div>
+					<div class="field-group">
+						<label for="product-sale">Precio de venta</label>
 						<input id="product-sale" name="saleAmount" type="text" inputmode="decimal" required />
+					</div>
+					<div class="field-group">
+						<label for="product-sale-currency">Moneda de venta</label>
+						<select id="product-sale-currency" name="saleCurrency" required></select>
 					</div>
 					<button class="primary-button compact" id="product-submit" type="submit">Añadir producto</button>
 				</form>
@@ -113,6 +121,43 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				<p class="empty-state" id="products-empty">Todavía no hay productos.</p>
 				<ul class="product-list" id="product-list"></ul>
 			</section>
+
+			<section class="panel import-panel" aria-labelledby="import-title">
+				<p class="section-label">Carga masiva</p>
+				<h2 id="import-title">Importar desde Excel o Word</h2>
+				<p class="panel-copy">
+					El archivo debe tener una tabla con estas columnas: nombre, precio de compra, moneda de compra,
+					precio de venta, moneda de venta. Primero verás una vista previa; nada se guarda hasta que lo confirmes.
+				</p>
+
+				<div class="import-controls">
+					<div class="field-group">
+						<label for="import-file">Archivo .xlsx o .docx</label>
+						<input id="import-file" type="file" accept=".xlsx,.xls,.docx" />
+					</div>
+					<button class="secondary-button compact" id="import-preview" type="button">Ver vista previa</button>
+					<button class="primary-button compact" id="import-apply" type="button" disabled>Importar filas válidas</button>
+				</div>
+				<p class="form-error" id="import-error" role="alert" hidden></p>
+				<p class="panel-note" id="import-summary" hidden></p>
+
+				<div class="import-table-wrap" id="import-table-wrap" hidden>
+					<table class="import-table">
+						<thead>
+							<tr>
+								<th scope="col">Fila</th>
+								<th scope="col">Nombre</th>
+								<th scope="col">Compra</th>
+								<th scope="col">Moneda</th>
+								<th scope="col">Venta</th>
+								<th scope="col">Moneda</th>
+								<th scope="col">Estado</th>
+							</tr>
+						</thead>
+						<tbody id="import-rows"></tbody>
+					</table>
+				</div>
+			</section>
 		</section>
 	</main>
 
@@ -120,7 +165,10 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		<li class="product-card">
 			<div class="product-head">
 				<h3 class="product-name"></h3>
-				<button class="link-button product-remove" type="button">Eliminar</button>
+				<div class="product-actions">
+					<button class="link-button product-edit" type="button">Editar</button>
+					<button class="link-button product-remove" type="button">Eliminar</button>
+				</div>
 			</div>
 			<dl class="product-figures">
 				<div><dt>Compra</dt><dd class="product-purchase"></dd></div>
@@ -156,6 +204,15 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		const productForm = document.querySelector<HTMLFormElement>('#product-form');
 		const productError = document.querySelector<HTMLElement>('#product-error');
 		const productSubmit = document.querySelector<HTMLButtonElement>('#product-submit');
+		const purchaseCurrency = document.querySelector<HTMLSelectElement>('#product-purchase-currency');
+		const saleCurrency = document.querySelector<HTMLSelectElement>('#product-sale-currency');
+		const importFile = document.querySelector<HTMLInputElement>('#import-file');
+		const importPreview = document.querySelector<HTMLButtonElement>('#import-preview');
+		const importApply = document.querySelector<HTMLButtonElement>('#import-apply');
+		const importError = document.querySelector<HTMLElement>('#import-error');
+		const importSummary = document.querySelector<HTMLElement>('#import-summary');
+		const importTableWrap = document.querySelector<HTMLElement>('#import-table-wrap');
+		const importRows = document.querySelector<HTMLElement>('#import-rows');
 		const productList = document.querySelector<HTMLUListElement>('#product-list');
 		const productsEmpty = document.querySelector<HTMLElement>('#products-empty');
 		const productCount = document.querySelector<HTMLElement>('#product-count');
@@ -174,11 +231,14 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			rate: Rate | null;
 			profitMargin: string | null;
 			profitMarkup: string | null;
+			profitUnavailable?: string | null;
 		};
 		type Session = { token: string; name: string; role: string };
 
 		let session: Session | null = null;
 		let profitMode: 'margin' | 'markup' | null = null;
+		let currentProducts: Product[] = [];
+		let currencies: string[] = [];
 
 		function showError(element: HTMLElement | null, message: string) {
 			if (!element) return;
@@ -191,6 +251,100 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			showError(rateError, '');
 			showError(modeError, '');
 			showError(productError, '');
+			showError(importError, '');
+		}
+
+		function fillCurrencies(list: string[]) {
+			currencies = list;
+			for (const select of [purchaseCurrency, saleCurrency]) {
+				if (!select) continue;
+				const previous = select.value;
+				select.textContent = '';
+				const placeholder = document.createElement('option');
+				placeholder.value = '';
+				placeholder.textContent = 'Elige';
+				select.append(placeholder);
+				for (const code of currencies) {
+					const option = document.createElement('option');
+					option.value = code;
+					option.textContent = code;
+					select.append(option);
+				}
+				select.value = currencies.includes(previous) ? previous : '';
+			}
+		}
+
+		async function loadCurrencies() {
+			if (!session) return;
+			const result = await request<{ currencies: string[] }>('/currencies', {}, session.token);
+			fillCurrencies(result.currencies);
+		}
+
+		type ImportRow = {
+			row: number;
+			values: { name: string; purchaseAmount: string; purchaseCurrency: string; saleAmount: string; saleCurrency: string };
+			status: 'ok' | 'error' | 'duplicate';
+			errors: string[];
+		};
+		type ImportResult = { summary: { total: number; ok: number; errors: number; duplicates: number }; rows: ImportRow[]; inserted?: number; warnings?: string[] };
+
+		function renderImport(result: ImportResult) {
+			if (!importRows || !importSummary || !importTableWrap) return;
+
+			importRows.textContent = '';
+			for (const item of result.rows) {
+				const tr = document.createElement('tr');
+				const cells = [
+					String(item.row),
+					item.values.name,
+					item.values.purchaseAmount,
+					item.values.purchaseCurrency,
+					item.values.saleAmount,
+					item.values.saleCurrency,
+				];
+				for (const value of cells) {
+					const td = document.createElement('td');
+					td.textContent = value || '—';
+					tr.append(td);
+				}
+				const status = document.createElement('td');
+				status.className = `import-status is-${item.status}`;
+				status.textContent =
+					item.status === 'ok' ? 'Válida' : item.status === 'duplicate' ? 'Duplicada' : item.errors.join(' ');
+				tr.append(status);
+				importRows.append(tr);
+			}
+
+			importSummary.hidden = false;
+			const base = `${result.summary.total} filas: ${result.summary.ok} válidas, ${result.summary.errors} con error, ${result.summary.duplicates} duplicadas.`;
+			importSummary.textContent = result.warnings?.length ? `${base} ${result.warnings.join(' ')}` : base;
+			importTableWrap.hidden = false;
+			if (importApply) importApply.disabled = result.summary.ok === 0;
+		}
+
+		async function sendImport(mode: 'preview' | 'apply'): Promise<ImportResult> {
+			if (!session) throw new Error('Sin sesión');
+			if (!importFile?.files?.length) throw new Error('Elige un archivo primero');
+
+			const file = importFile.files[0];
+			const buffer = await file.arrayBuffer();
+			const bytes = new Uint8Array(buffer);
+			let binary = '';
+			const chunk = 0x8000;
+			for (let index = 0; index < bytes.length; index += chunk) {
+				binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+			}
+			const dataBase64 = btoa(binary);
+
+			const response = await fetch(`${apiUrl}/products/import`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', authorization: `Bearer ${session.token}` },
+				body: JSON.stringify({ filename: file.name, dataBase64, mode }),
+			});
+			const text = await response.text();
+			const parsed = text ? JSON.parse(text) : null;
+			if (!response.ok) throw new Error(parsed?.error ?? `Error ${response.status}`);
+			return parsed as ImportResult;
 		}
 
 		async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
@@ -235,6 +389,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		function renderProducts(products: Product[]) {
 			if (!productList || !template || !productsEmpty || !productCount) return;
 
+			currentProducts = products;
 			productList.textContent = '';
 			productCount.textContent = products.length === 1 ? '1 producto' : `${products.length} productos`;
 			productsEmpty.hidden = products.length > 0;
@@ -258,6 +413,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 				const meta: string[] = [];
 				if (product.cupUnavailable) meta.push(`Falta la tasa para ${product.purchaseCurrency}.`);
+				if (product.profitUnavailable) meta.push("Compra y venta están en monedas distintas; el porcentaje no se calcula.");
 				if (product.rate && session?.role === 'admin') {
 					meta.push(`Tasa usada: ${product.rate.cupPerUnit} (${formatTime(product.rate.observedAt)}).`);
 				}
@@ -274,15 +430,98 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			}
 		}
 
+		function startEdit(card: HTMLElement, product: Product) {
+			if (card.querySelector('.product-edit-form')) return;
+
+			const form = document.createElement('form');
+			form.className = 'product-edit-form';
+			form.innerHTML = `
+				<div class="edit-grid">
+					<div class="field-group"><label>Nombre</label><input name="name" type="text" /></div>
+					<div class="field-group"><label>Precio de compra</label><input name="purchaseAmount" type="text" inputmode="decimal" /></div>
+					<div class="field-group"><label>Moneda de compra</label><select name="purchaseCurrency"></select></div>
+					<div class="field-group"><label>Precio de venta</label><input name="saleAmount" type="text" inputmode="decimal" /></div>
+					<div class="field-group"><label>Moneda de venta</label><select name="saleCurrency"></select></div>
+				</div>
+				<p class="form-error" role="alert" hidden></p>
+				<div class="edit-actions">
+					<button class="primary-button compact" type="submit">Guardar cambios</button>
+					<button class="secondary-button compact" type="button" data-cancel>Cancelar</button>
+				</div>`;
+
+			const nameInput = form.querySelector<HTMLInputElement>('input[name="name"]')!;
+			const purchaseInput = form.querySelector<HTMLInputElement>('input[name="purchaseAmount"]')!;
+			const saleInput = form.querySelector<HTMLInputElement>('input[name="saleAmount"]')!;
+			const purchaseSelect = form.querySelector<HTMLSelectElement>('select[name="purchaseCurrency"]')!;
+			const saleSelect = form.querySelector<HTMLSelectElement>('select[name="saleCurrency"]')!;
+
+			nameInput.value = product.name;
+			purchaseInput.value = product.purchaseAmount;
+			saleInput.value = product.saleAmount;
+
+			for (const select of [purchaseSelect, saleSelect]) {
+				for (const code of currencies) {
+					const option = document.createElement('option');
+					option.value = code;
+					option.textContent = code;
+					select.append(option);
+				}
+			}
+			purchaseSelect.value = product.purchaseCurrency;
+			saleSelect.value = product.saleCurrency;
+
+			form.querySelector('[data-cancel]')?.addEventListener('click', () => {
+				renderProducts(currentProducts);
+			});
+
+			form.addEventListener('submit', async (event) => {
+				event.preventDefault();
+				const error = form.querySelector<HTMLElement>('.form-error');
+				if (error) error.hidden = true;
+				if (!session) return;
+
+				const payload = {
+					name: nameInput.value.trim(),
+					purchaseAmount: purchaseInput.value.trim(),
+					purchaseCurrency: purchaseSelect.value,
+					saleAmount: saleInput.value.trim(),
+					saleCurrency: saleSelect.value,
+				};
+
+				if (!payload.name || !payload.purchaseAmount || !payload.saleAmount || !payload.purchaseCurrency || !payload.saleCurrency) {
+					if (error) {
+						error.textContent = 'Completa nombre, precios y monedas.';
+						error.hidden = false;
+					}
+					return;
+				}
+
+				try {
+					await request(`/products/${product.id}`, { method: 'PATCH', body: JSON.stringify(payload) }, session.token);
+					await loadData();
+				} catch (problem) {
+					if (error) {
+						error.textContent = problem instanceof Error ? problem.message : 'No se pudo guardar.';
+						error.hidden = false;
+					}
+				}
+			});
+
+			card.textContent = '';
+			card.append(form);
+		}
+
 		async function loadData() {
 			if (!session) return;
-			const [productsResponse, rateResponse, settingsResponse] = await Promise.all([
+			const [productsResponse, rateResponse, settingsResponse, currenciesResponse] = await Promise.all([
 				request<{ products: Product[] }>('/products', {}, session.token),
 				request<{ currency: string; rate: Rate | null }>('/rate', {}, session.token),
 				request<{ profitMode: 'margin' | 'markup' | null }>('/settings', {}, session.token),
+				request<{ currencies: string[] }>('/currencies', {}, session.token),
 			]);
 
 			profitMode = settingsResponse.profitMode;
+			fillCurrencies(currenciesResponse.currencies);
 			renderMode();
 			renderRate(rateResponse.rate);
 			renderProducts(productsResponse.products);
@@ -395,12 +634,16 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				name: String(data.get('name') ?? '').trim(),
 				purchaseAmount: String(data.get('purchaseAmount') ?? '').trim(),
 				saleAmount: String(data.get('saleAmount') ?? '').trim(),
-				purchaseCurrency: 'USD',
-				saleCurrency: 'USD',
+				purchaseCurrency: String(data.get('purchaseCurrency') ?? '').trim(),
+				saleCurrency: String(data.get('saleCurrency') ?? '').trim(),
 			};
 
 			if (!payload.name || !payload.purchaseAmount || !payload.saleAmount) {
 				showError(productError, 'Completa nombre, compra y venta.');
+				return;
+			}
+			if (!payload.purchaseCurrency || !payload.saleCurrency) {
+				showError(productError, 'Elige la moneda de compra y la de venta.');
 				return;
 			}
 
@@ -418,10 +661,17 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 		productList?.addEventListener('click', async (event) => {
 			const target = event.target as HTMLElement;
-			if (!target.classList.contains('product-remove') || !session) return;
-
 			const card = target.closest<HTMLElement>('.product-card');
-			const id = card?.dataset.id;
+			if (!card || !session) return;
+
+			if (target.classList.contains('product-edit')) {
+				const product = currentProducts.find((item) => item.id === card.dataset.id);
+				if (product) startEdit(card, product);
+				return;
+			}
+
+			if (!target.classList.contains('product-remove')) return;
+			const id = card.dataset.id;
 			if (!id) return;
 
 			try {
@@ -429,6 +679,35 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				await loadData();
 			} catch (error) {
 				handleExpired(error);
+			}
+		});
+
+		importPreview?.addEventListener('click', async () => {
+			clearErrors();
+			if (importPreview) importPreview.disabled = true;
+			try {
+				renderImport(await sendImport('preview'));
+			} catch (error) {
+				showError(importError, error instanceof Error ? error.message : 'No se pudo leer el archivo.');
+			} finally {
+				if (importPreview) importPreview.disabled = false;
+			}
+		});
+
+		importApply?.addEventListener('click', async () => {
+			clearErrors();
+			if (importApply) importApply.disabled = true;
+			try {
+				const result = await sendImport('apply');
+				renderImport(result);
+				if (importSummary) {
+					importSummary.textContent = `Importadas ${result.inserted ?? 0} filas. ${result.summary.errors} con error y ${result.summary.duplicates} duplicadas quedaron fuera.`;
+				}
+				await loadData();
+			} catch (error) {
+				showError(importError, error instanceof Error ? error.message : 'No se pudo importar.');
+			} finally {
+				if (importApply) importApply.disabled = false;
 			}
 		});
 
@@ -694,12 +973,77 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 		.product-form {
 			display: grid;
-			grid-template-columns: 1.3fr 1fr 1fr auto;
+			grid-template-columns: 1.2fr 1fr 0.7fr 1fr 0.7fr auto;
 			gap: 0.75rem;
 			align-items: end;
 			padding-bottom: 1.25rem;
 			border-bottom: 1px solid var(--color-border);
 			margin-bottom: 1.25rem;
+		}
+
+		select {
+			width: 100%;
+			min-height: 3rem;
+			padding: 0.6rem 0.5rem;
+			border: 1px solid var(--color-border);
+			border-radius: var(--radius-field);
+			background: var(--color-surface);
+			color: var(--color-ink);
+		}
+
+		.import-panel {
+			margin-top: 1.25rem;
+		}
+
+		.import-controls {
+			display: grid;
+			grid-template-columns: 1fr auto auto;
+			gap: 0.75rem;
+			align-items: end;
+			margin-bottom: 0.5rem;
+		}
+
+		.import-controls .field-group {
+			margin-bottom: 0;
+		}
+
+		.import-table-wrap {
+			overflow-x: auto;
+			margin-top: 0.75rem;
+		}
+
+		.import-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.875rem;
+		}
+
+		.import-table th,
+		.import-table td {
+			padding: 0.45rem 0.6rem;
+			border-bottom: 1px solid var(--color-border);
+			text-align: left;
+			vertical-align: top;
+		}
+
+		.import-table th {
+			color: var(--color-muted);
+			font-weight: 700;
+		}
+
+		.import-status.is-ok {
+			color: #2d5f3f;
+			font-weight: 600;
+		}
+
+		.import-status.is-duplicate {
+			color: #7a5a17;
+			font-weight: 600;
+		}
+
+		.import-status.is-error {
+			color: #8a2c1e;
+			font-weight: 600;
 		}
 
 		.product-form .field-group {
@@ -726,6 +1070,27 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			justify-content: space-between;
 			gap: 1rem;
 			margin-bottom: 0.75rem;
+		}
+
+		.product-actions {
+			display: flex;
+			gap: 0.9rem;
+		}
+
+		.edit-grid {
+			display: grid;
+			grid-template-columns: 1.4fr 1fr 0.7fr 1fr 0.7fr;
+			gap: 0.6rem;
+			margin-bottom: 0.5rem;
+		}
+
+		.edit-grid .field-group {
+			margin-bottom: 0;
+		}
+
+		.edit-actions {
+			display: flex;
+			gap: 0.6rem;
 		}
 
 		.product-name {
@@ -796,6 +1161,10 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				grid-template-columns: 1fr;
 			}
 
+			.import-controls {
+				grid-template-columns: 1fr;
+			}
+
 			.primary-button.compact {
 				width: 100%;
 			}
@@ -823,6 +1192,10 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 			.product-figures {
 				grid-template-columns: 1fr 1fr;
+			}
+
+			.edit-grid {
+				grid-template-columns: 1fr;
 			}
 		}
 	</style>

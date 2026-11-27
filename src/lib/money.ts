@@ -32,8 +32,8 @@ export function formatRounded(value: Decimal, decimals: number): string {
   return negative && scaled !== 0n ? `-${body}` : body;
 }
 
-// CUP equivalent of a USD amount, given the rate expressed as CUP per 1 USD.
-// USD only for now: other purchase currencies are still [OPEN] (AGENTS.md B.11 #9), so this helper does not accept them.
+// CUP equivalent of an amount, given the rate expressed as CUP per one unit of that amount's currency.
+// The caller must pass the rate stored for the purchase currency; no currency is assumed here.
 export function cupEquivalent(purchaseUsd: string, rateCupPerUsd: string): string {
   const purchase = parseDecimal(purchaseUsd);
   const rate = parseDecimal(rateCupPerUsd);
@@ -55,4 +55,23 @@ export function profitPercent(purchaseUsd: string, saleUsd: string, mode: Profit
 
   if (purchase.n === 0n) return null;
   return formatRounded({ n: 100n * difference, d: sale.d * purchase.n }, 2);
+}
+
+// Equality without division: a/b === c/d when a*d === c*b.
+export function decimalEquals(a: Decimal, b: Decimal): boolean {
+  return a.n * b.d === b.n * a.d;
+}
+
+// Canonical key so "12.50" and "12.5" produce the same string.
+export function canonicalDecimalKey(value: string): string {
+  const { n, d } = parseDecimal(value);
+  let a = n;
+  let b = d;
+  while (b !== 0n) {
+    const rest = a % b;
+    a = b;
+    b = rest;
+  }
+  const divisor = a === 0n ? 1n : a;
+  return `${n / divisor}/${d / divisor}`;
 }
