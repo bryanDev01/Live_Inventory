@@ -10,6 +10,7 @@ import {
 	multiplyDecimals,
 	parseDecimal,
 	percentOf,
+	parseSignedDecimal,
 	subtractDecimals,
 	type Decimal,
 } from "./src/lib/money";
@@ -180,6 +181,20 @@ function requireCurrency(body: Record<string, unknown>, key: string): string {
 	return value;
 }
 
+// Profit limit as a percentage. The 10% default is owner-confirmed (AGENTS.md B.12).
+function optionalProfitLimit(body: Record<string, unknown>, key: string): string | null {
+	if (body[key] === undefined || body[key] === "") return null;
+	const value = requireString(body, key);
+	let parsed;
+	try {
+		parsed = parseDecimal(value);
+	} catch {
+		throw new ValidationError(`${key} must be a plain decimal, for example 10.00`);
+	}
+	if (parsed.n < 0n) throw new ValidationError(`${key} cannot be negative`);
+	return value;
+}
+
 function requiredAmount(body: Record<string, unknown>, key: string): string {
 	const value = requireString(body, key);
 	let parsed;
@@ -287,6 +302,7 @@ type ProductRow = {
 	purchase_currency: string;
 	sale_amount: string;
 	sale_currency: string;
+	profit_limit: string;
 };
 
 const PAGE_SIZE = 15;
@@ -300,7 +316,7 @@ async function productsPayload(requestedPage = 1): Promise<ProductPage> {
 	const page = Math.min(Math.max(1, Math.trunc(requestedPage) || 1), pages);
 
 	const { rows } = await queryRead<ProductRow>(
-		`select id, name, purchase_amount, purchase_currency, sale_amount, sale_currency
+		`select id, name, purchase_amount, purchase_currency, sale_amount, sale_currency, profit_limit
 		 from product order by lower(name), id
 		 limit $1 offset $2`,
 		[PAGE_SIZE, (page - 1) * PAGE_SIZE],
@@ -355,6 +371,7 @@ async function productsPayload(requestedPage = 1): Promise<ProductPage> {
 			profitCup,
 			profitMargin,
 			profitMarkup,
+			profitLimit: formatRounded(parseDecimal(String(row.profit_limit)), 2),
 			profitUnavailable,
 		};
 	});
@@ -376,11 +393,12 @@ async function createProduct(request: Request, headers: Record<string, string>):
 	// Currency is explicit: no silent reliance on a column default.
 	const purchaseCurrency = requireCurrency(body, "purchaseCurrency");
 	const saleCurrency = requireCurrency(body, "saleCurrency");
+	const profitLimit = optionalProfitLimit(body, "profitLimit") ?? "10";
 
 	const { rows } = await query<{ id: string }>(
-		`insert into product (name, purchase_amount, purchase_currency, sale_amount, sale_currency)
-		 values ($1, $2, $3, $4, $5) returning id`,
-		[name, purchase, purchaseCurrency, sale, saleCurrency],
+		`insert into product (name, purchase_amount, purchase_currency, sale_amount, sale_currency, profit_limit)
+		 values ($1, $2, $3, $4, $5, $6) returning id`,
+		[name, purchase, purchaseCurrency, sale, saleCurrency, profitLimit],
 	);
 
 	return json({ id: rows[0]?.id, ...await productsPayload(1) }, 201, headers);
@@ -405,6 +423,8 @@ async function updateProduct(
 	if (body.saleAmount !== undefined) add("sale_amount", requiredAmount(body, "saleAmount"));
 	if (body.purchaseCurrency !== undefined) add("purchase_currency", requireCurrency(body, "purchaseCurrency"));
 	if (body.saleCurrency !== undefined) add("sale_currency", requireCurrency(body, "saleCurrency"));
+	const profitLimit = optionalProfitLimit(body, "profitLimit");
+	if (profitLimit !== null) add("profit_limit", profitLimit);
 
 	if (fields.length === 0) throw new ValidationError("Nothing to update");
 
@@ -455,31 +475,12 @@ async function putRate(
 		}
 	}
 
-	// One statement: the rate and its alert are committed together or not at all.
-	// The previous CTE reads the snapshot from before this insert, so the comparison is exact.
+	// Uniqueness is enforced by (currency, source, observed_at) in db/migrations/001_core.sql.
 	const { rows } = await query<RateRow>(
-		`with previous as (
-			select cup_per_unit from exchange_rate
-			where currency = $1
-			order by observed_at desc, fetched_at desc
-			limit 1
-		 ), inserted as (
-			insert into exchange_rate (currency, cup_per_unit, source, observed_at)
-			select $1, $2, 'manual', date_trunc('minute', now())
-			on conflict (currency, source, observed_at) do nothing
-			returning currency, cup_per_unit, source, observed_at, fetched_at
-		 ), raised as (
-			insert into rate_alert (currency, previous_rate, new_rate, direction)
-			select i.currency, p.cup_per_unit, i.cup_per_unit,
-				case
-					when p.cup_per_unit is null then 'first'
-					when i.cup_per_unit > p.cup_per_unit then 'up'
-					else 'down'
-				end
-			from inserted i left join previous p on true
-			where p.cup_per_unit is null or i.cup_per_unit <> p.cup_per_unit
-		 )
-		 select currency, cup_per_unit, source, observed_at, fetched_at from inserted`,
+		`insert into exchange_rate (currency, cup_per_unit, source, observed_at)
+		 select $1, $2, 'manual', date_trunc('minute', now())
+		 on conflict (currency, source, observed_at) do nothing
+		 returning currency, cup_per_unit, source, observed_at, fetched_at`,
 		[REFERENCE_CURRENCY, cupPerUsd],
 	);
 
@@ -499,19 +500,20 @@ async function putRate(
 
 	const saved = rows[0];
 
-	// Notify every subscribed device. The admin's change is the only trigger today.
-	const savedValue = parseDecimal(String(saved.cup_per_unit));
-	const savedText = formatRounded(savedValue, 2);
-	let pushBody = `Tasa registrada en ${savedText} CUP por 1 USD.`;
-	if (latest) {
-		const previousValue = parseDecimal(String(latest.cup_per_unit));
-		const previousText = formatRounded(previousValue, 2);
-		const verb = savedValue.n * previousValue.d > previousValue.n * savedValue.d ? "subió" : "bajó";
-		pushBody = `La tasa ${verb} de ${previousText} a ${savedText} CUP por 1 USD. Revisa tus precios.`;
+	// The new flow: alert only for the products that reached their own profit limit.
+	const raised = await raiseProductAlerts(String(saved.cup_per_unit));
+	for (const item of raised) {
+		await sendRatePush({
+			title: "Revisa el precio de un producto",
+			body: `${item.name}: la ganancia sobre el costo bajó a ${item.percent}%, por debajo de tu límite de ${item.limit}%. Revisa su precio de venta.`,
+		});
 	}
-	await sendRatePush({ title: "Cambio en la tasa", body: pushBody });
 
-	return json({ currency: REFERENCE_CURRENCY, rate: toRate(saved) }, 200, headers);
+	return json(
+		{ currency: REFERENCE_CURRENCY, rate: toRate(saved), alertsRaised: raised.length },
+		200,
+		headers,
+	);
 }
 
 async function getSettings(headers: Record<string, string>): Promise<Response> {
@@ -914,22 +916,22 @@ async function unsubscribePush(
 	return json({ ok: true }, 200, headers);
 }
 
-type AlertRow = {
+type ProductAlertRow = {
 	id: string;
-	currency: string;
-	previous_rate: string | null;
-	new_rate: string;
-	direction: string;
+	product_name: string;
+	profit_percent: string;
+	profit_limit: string;
+	rate: string;
 	created_at: Date;
 	read: boolean;
 };
 
 async function listAlerts(identity: Identity, headers: Record<string, string>): Promise<Response> {
-	const { rows } = await queryRead<AlertRow>(
-		`select a.id, a.currency, a.previous_rate, a.new_rate, a.direction, a.created_at,
+	const { rows } = await queryRead<ProductAlertRow>(
+		`select a.id, a.product_name, a.profit_percent, a.profit_limit, a.rate, a.created_at,
 		        (r.alert_id is not null) as read
-		 from rate_alert a
-		 left join rate_alert_read r on r.alert_id = a.id and lower(r.user_email) = lower($1)
+		 from product_alert a
+		 left join product_alert_read r on r.alert_id = a.id and lower(r.user_email) = lower($1)
 		 order by a.created_at desc, a.id desc
 		 limit 50`,
 		[identity.email],
@@ -937,10 +939,10 @@ async function listAlerts(identity: Identity, headers: Record<string, string>): 
 
 	const alerts = rows.map((row) => ({
 		id: row.id,
-		currency: row.currency,
-		previousRate: row.previous_rate === null ? null : formatRounded(parseDecimal(String(row.previous_rate)), 2),
-		newRate: formatRounded(parseDecimal(String(row.new_rate)), 2),
-		direction: row.direction,
+		productName: row.product_name,
+		profitPercent: formatRounded(parseSignedDecimal(String(row.profit_percent)), 2),
+		profitLimit: formatRounded(parseDecimal(String(row.profit_limit)), 2),
+		rate: formatRounded(parseDecimal(String(row.rate)), 2),
 		createdAt: new Date(row.created_at).toISOString(),
 		read: row.read,
 	}));
@@ -957,8 +959,8 @@ async function markAlertsRead(
 
 	if (body.all === true) {
 		await query(
-			`insert into rate_alert_read (alert_id, user_email)
-			 select id, $1 from rate_alert
+			`insert into product_alert_read (alert_id, user_email)
+			 select id, $1 from product_alert
 			 on conflict do nothing`,
 			[identity.email],
 		);
@@ -966,13 +968,58 @@ async function markAlertsRead(
 	}
 
 	const id = requireString(body, "id");
-	if (!/^d+$/.test(id)) throw new ValidationError("Invalid alert id");
+	if (!/^\d+$/.test(id)) throw new ValidationError("Invalid alert id");
 	await query(
-		`insert into rate_alert_read (alert_id, user_email) values ($1::bigint, $2)
+		`insert into product_alert_read (alert_id, user_email) values ($1::bigint, $2)
 		 on conflict do nothing`,
 		[id, identity.email],
 	);
 	return json({ ok: true }, 200, headers);
+}
+
+type RaisedAlert = { name: string; percent: string; limit: string };
+
+// Evaluates every product against its own limit and records the ones at or below it.
+async function raiseProductAlerts(rateValue: string): Promise<RaisedAlert[]> {
+	const { rows } = await queryRead<ProductRow>(
+		`select id, name, purchase_amount, purchase_currency, sale_amount, sale_currency, profit_limit from product`,
+	);
+	if (rows.length === 0) return [];
+
+	const currencies = [...new Set(rows.flatMap((row) => [row.purchase_currency, row.sale_currency]))];
+	const rates = await latestRates(currencies);
+
+	const toCup = (amount: string, currency: string): Decimal | null => {
+		if (currency === "CUP") return parseDecimal(amount);
+		const record = rates.get(currency);
+		return record ? multiplyDecimals(amount, record.exact) : null;
+	};
+
+	const raised: RaisedAlert[] = [];
+
+	for (const row of rows) {
+		const cost = toCup(String(row.purchase_amount), row.purchase_currency);
+		const sale = toCup(String(row.sale_amount), row.sale_currency);
+		if (!cost || !sale) continue;
+
+		const markup = percentOf(cost, sale, "markup");
+		if (markup === null) continue;
+
+		const percent = parseSignedDecimal(markup);
+		const threshold = parseDecimal(String(row.profit_limit));
+		// Alert when the profit is at or below the limit.
+		if (percent.n * threshold.d > threshold.n * percent.d) continue;
+
+		const limitText = formatRounded(threshold, 2);
+		await query(
+			`insert into product_alert (product_id, product_name, profit_percent, profit_limit, rate)
+			 values ($1, $2, $3, $4, $5)`,
+			[row.id, row.name, markup, String(row.profit_limit), rateValue],
+		);
+		raised.push({ name: row.name, percent: markup, limit: limitText });
+	}
+
+	return raised;
 }
 
 async function listCurrencies(headers: Record<string, string>): Promise<Response> {
@@ -1027,5 +1074,6 @@ const handler = {
 };
 
 export default handler;
+
 
 

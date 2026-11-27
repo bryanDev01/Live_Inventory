@@ -76,7 +76,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 					</form>
 					<p class="form-error" id="rate-error" role="alert" hidden></p>
 					<p class="panel-note">
-						La tasa se guarda manualmente mientras El Toque no entregue la clave. Queda registrada con su hora.
+						La tasa de referencia se actualiza desde el servidor. Queda registrada con su hora.
 						Nunca se cambia el precio de venta automáticamente.
 					</p>
 				</section>
@@ -130,6 +130,10 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 						<label for="product-sale-currency">Moneda de venta</label>
 						<select id="product-sale-currency" name="saleCurrency" required></select>
 					</div>
+					<div class="field-group">
+						<label for="product-limit">Límite de ganancia (%)</label>
+						<input id="product-limit" name="profitLimit" type="text" inputmode="decimal" value="10" />
+					</div>
 					<button class="primary-button compact" id="product-submit" type="submit">Añadir producto</button>
 				</form>
 				<p class="form-error" id="product-error" role="alert" hidden></p>
@@ -149,6 +153,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 								<th scope="col">Ganancia o pérdida</th>
 								<th scope="col">Sobre la venta</th>
 								<th scope="col">Sobre la compra</th>
+								<th scope="col">Límite</th>
 								<th scope="col">Acciones</th>
 							</tr>
 						</thead>
@@ -215,6 +220,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			<td class="cell-number product-result" data-label="Ganancia o pérdida"></td>
 			<td class="cell-number product-margin" data-label="Sobre la venta"></td>
 			<td class="cell-number product-markup" data-label="Sobre la compra"></td>
+			<td class="cell-number product-limit" data-label="Límite"></td>
 			<td class="cell-actions" data-label="Acciones">
 				<button class="link-button product-edit" type="button">Editar</button>
 				<button class="link-button product-remove" type="button">Eliminar</button>
@@ -281,6 +287,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			profitMargin: string | null;
 			profitMarkup: string | null;
 			profitCup: string | null;
+			profitLimit: string;
 			profitUnavailable?: string | null;
 			saleCupEquivalent?: string | null;
 		};
@@ -455,16 +462,16 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				return;
 			}
 			if (dayRate) dayRate.textContent = `${rate.cupPerUnit} CUP`;
-			rateStatus.textContent = `${rate.cupPerUnit} CUP por 1 USD. ${rate.source === 'manual' ? 'Ingresada manualmente' : 'Origen El Toque'}, ${formatTime(rate.observedAt)}.`;
+			rateStatus.textContent = `${rate.cupPerUnit} CUP por 1 USD. Registrada ${formatTime(rate.observedAt)}.`;
 			rateSummary.textContent = `1 USD = ${rate.cupPerUnit} CUP. Actualizada ${formatTime(rate.observedAt)}.`;
 		}
 
 		type Alert = {
 			id: string;
-			currency: string;
-			previousRate: string | null;
-			newRate: string;
-			direction: 'up' | 'down' | 'first';
+			productName: string;
+			profitPercent: string;
+			profitLimit: string;
+			rate: string;
 			createdAt: string;
 			read: boolean;
 		};
@@ -473,11 +480,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		let pushReady = false;
 
 		function alertMessage(alert: Alert): string {
-			if (alert.direction === 'first' || alert.previousRate === null) {
-				return `Tasa registrada: ${alert.newRate} CUP por 1 USD.`;
-			}
-			const verb = alert.direction === 'up' ? 'subió' : 'bajó';
-			return `La tasa ${verb} de ${alert.previousRate} a ${alert.newRate} CUP por 1 USD. Revisa tus precios.`;
+			return `${alert.productName}: la ganancia sobre el costo bajó a ${alert.profitPercent}%, por debajo de tu límite de ${alert.profitLimit}%. Revisa su precio de venta.`;
 		}
 
 		function notifyNewAlerts(alerts: Alert[]) {
@@ -631,6 +634,13 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				const markup = node.querySelector(".product-markup")!;
 				margin.textContent = formatPercent(product.profitMargin);
 				markup.textContent = formatPercent(product.profitMarkup);
+
+				const limitCell = node.querySelector('.product-limit')!;
+				limitCell.textContent = `${product.profitLimit}%`;
+				const below =
+					product.profitMarkup !== null &&
+					Number(product.profitMarkup) <= Number(product.profitLimit);
+				limitCell.classList.toggle('is-below', below);
 				margin.classList.toggle("is-primary", profitMode === "margin");
 				markup.classList.toggle("is-primary", profitMode === "markup");
 
@@ -685,6 +695,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 					<div class="field-group"><label>Moneda de compra</label><select name="purchaseCurrency"></select></div>
 					<div class="field-group"><label>Precio de venta</label><input name="saleAmount" type="text" inputmode="decimal" /></div>
 					<div class="field-group"><label>Moneda de venta</label><select name="saleCurrency"></select></div>
+					<div class="field-group"><label>Límite (%)</label><input name="profitLimit" type="text" inputmode="decimal" /></div>
 				</div>
 				<p class="form-error" role="alert" hidden></p>
 				<div class="edit-actions">
@@ -697,10 +708,12 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			const saleInput = form.querySelector<HTMLInputElement>('input[name="saleAmount"]')!;
 			const purchaseSelect = form.querySelector<HTMLSelectElement>('select[name="purchaseCurrency"]')!;
 			const saleSelect = form.querySelector<HTMLSelectElement>('select[name="saleCurrency"]')!;
+			const limitInput = form.querySelector<HTMLInputElement>('input[name="profitLimit"]')!;
 
 			nameInput.value = product.name;
 			purchaseInput.value = product.purchaseAmount;
 			saleInput.value = product.saleAmount;
+			limitInput.value = product.profitLimit;
 
 			for (const select of [purchaseSelect, saleSelect]) {
 				for (const code of currencies) {
@@ -729,6 +742,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 					purchaseCurrency: purchaseSelect.value,
 					saleAmount: saleInput.value.trim(),
 					saleCurrency: saleSelect.value,
+					profitLimit: limitInput.value.trim() || '10',
 				};
 
 				if (!payload.name || !payload.purchaseAmount || !payload.saleAmount || !payload.purchaseCurrency || !payload.saleCurrency) {
@@ -751,7 +765,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			});
 
 			const cell = document.createElement('td');
-			cell.colSpan = 9;
+			cell.colSpan = 10;
 			cell.append(form);
 			card.textContent = '';
 			card.append(cell);
@@ -923,6 +937,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				saleAmount: String(data.get('saleAmount') ?? '').trim(),
 				purchaseCurrency: String(data.get('purchaseCurrency') ?? '').trim(),
 				saleCurrency: String(data.get('saleCurrency') ?? '').trim(),
+				profitLimit: String(data.get('profitLimit') ?? '').trim() || '10',
 			};
 
 			if (!payload.name || !payload.purchaseAmount || !payload.saleAmount) {
@@ -1290,7 +1305,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 		.product-form {
 			display: grid;
-			grid-template-columns: 1.2fr 1fr 0.7fr 1fr 0.7fr auto;
+			grid-template-columns: 1.2fr 1fr 0.7fr 1fr 0.7fr 0.7fr auto;
 			gap: 0.75rem;
 			align-items: end;
 			padding-bottom: 1.25rem;
@@ -1626,6 +1641,11 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			margin: 0;
 			color: var(--color-muted);
 			font-variant-numeric: tabular-nums;
+		}
+
+		.product-limit.is-below {
+			color: #8a2c1e;
+			font-weight: 700;
 		}
 
 		.list-summary {

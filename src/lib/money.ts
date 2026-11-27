@@ -98,3 +98,13 @@ export function percentOf(purchase: Decimal, sale: Decimal, mode: ProfitMode): s
 export function formatDecimal(value: Decimal): string {
   return formatRounded(value, 2);
 }
+
+// Signed variant for derived values (profit can be negative). User-entered amounts stay unsigned.
+export function parseSignedDecimal(value: string): Decimal {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("-")) {
+    const positive = parseDecimal(trimmed.slice(1));
+    return { n: -positive.n, d: positive.d };
+  }
+  return parseDecimal(trimmed);
+}

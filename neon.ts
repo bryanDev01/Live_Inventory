@@ -21,7 +21,7 @@ export default defineConfig({
     },
     api: {
       name: "Inventory API",
-      source: "./api.ts",
+      source: "./main-api.ts",
       env: {
         APP_ORIGIN: { value: process.env.APP_ORIGIN, required: true },
         ALLOWED_CURRENCIES: { value: process.env.ALLOWED_CURRENCIES, required: true },
