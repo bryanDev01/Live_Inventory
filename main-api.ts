@@ -92,7 +92,9 @@ function corsHeaders(request: Request): Record<string, string> | null {
 		// Not configured yet: allow only calls without a browser Origin header.
 		return origin ? null : {};
 	}
-	if (!origin || !allowedOrigins.includes(origin)) return null;
+	// Preview deployments get their own host, so every vercel.app subdomain is accepted.
+	const isVercelPreview = Boolean(origin) && /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin ?? "");
+	if (!origin || (!allowedOrigins.includes(origin) && !isVercelPreview)) return null;
 	return {
 		"access-control-allow-origin": origin,
 		"access-control-allow-headers": "authorization, content-type",

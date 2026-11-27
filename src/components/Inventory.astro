@@ -457,7 +457,9 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			if (!rateStatus || !rateSummary) return;
 			if (!rate) {
 				if (dayRate) dayRate.textContent = 'Sin tasa';
-				rateStatus.textContent = 'Sin tasa registrada. Añade una para ver los equivalentes en CUP.';
+				rateStatus.textContent = isAdmin
+					? 'Sin tasa registrada. Añade una para ver los equivalentes en CUP.'
+					: 'Sin tasa registrada todavía.';
 				rateSummary.textContent = 'Sin tasa de referencia.';
 				return;
 			}
@@ -836,6 +838,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 		function handleExpired(error: unknown) {
 			const message = error instanceof Error ? error.message : 'Error inesperado';
+			// Keep the failure visible at the top instead of leaving a permanent "Cargando".
+			if (rateStatus) rateStatus.textContent = `No se pudo cargar la tasa: ${message}`;
 			if (!isAdmin) {
 				showError(productError, message);
 				return;
