@@ -14,9 +14,20 @@ import {
 	type Decimal,
 } from "./src/lib/money";
 import { createHash } from "node:crypto";
+import * as webpushNamespace from "web-push";
+
+// web-push is CommonJS: keep a single binding that works in both shapes.
+const webpush = ((webpushNamespace as unknown as { default?: typeof webpushNamespace }).default ?? webpushNamespace);
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
+
+// Push notifications need a matching VAPID key pair and a contact subject.
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? "";
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY ?? "";
+const vapidSubject = process.env.VAPID_SUBJECT ?? "";
+const pushEnabled = Boolean(vapidPublicKey && vapidPrivateKey && vapidSubject);
+if (pushEnabled) webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 
 const pool = new Pool({
 	connectionString: databaseUrl,
@@ -487,6 +498,19 @@ async function putRate(
 	}
 
 	const saved = rows[0];
+
+	// Notify every subscribed device. The admin's change is the only trigger today.
+	const savedValue = parseDecimal(String(saved.cup_per_unit));
+	const savedText = formatRounded(savedValue, 2);
+	let pushBody = `Tasa registrada en ${savedText} CUP por 1 USD.`;
+	if (latest) {
+		const previousValue = parseDecimal(String(latest.cup_per_unit));
+		const previousText = formatRounded(previousValue, 2);
+		const verb = savedValue.n * previousValue.d > previousValue.n * savedValue.d ? "subió" : "bajó";
+		pushBody = `La tasa ${verb} de ${previousText} a ${savedText} CUP por 1 USD. Revisa tus precios.`;
+	}
+	await sendRatePush({ title: "Cambio en la tasa", body: pushBody });
+
 	return json({ currency: REFERENCE_CURRENCY, rate: toRate(saved) }, 200, headers);
 }
 
@@ -820,6 +844,76 @@ async function importProducts(request: Request, headers: Record<string, string>)
 }
 
 
+type PushRow = { endpoint: string; p256dh: string; auth: string };
+
+// Sends the rate change to every subscribed device and drops subscriptions the push service rejects.
+async function sendRatePush(payload: { title: string; body: string }): Promise<void> {
+	if (!pushEnabled) return;
+
+	const { rows } = await queryRead<PushRow>(`select endpoint, p256dh, auth from push_subscription`);
+	const stale: string[] = [];
+
+	await Promise.all(
+		rows.map(async (row) => {
+			try {
+				await webpush.sendNotification(
+					{ endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
+					JSON.stringify(payload),
+				);
+			} catch (error) {
+				const status = (error as { statusCode?: number } | null)?.statusCode;
+				if (status === 404 || status === 410) stale.push(row.endpoint);
+			}
+		}),
+	);
+
+	if (stale.length > 0) {
+		await query(`delete from push_subscription where endpoint = any($1::text[])`, [stale]);
+	}
+}
+
+function pushKeyResponse(headers: Record<string, string>): Response {
+	return json({ key: vapidPublicKey || null }, 200, headers);
+}
+
+async function subscribePush(
+	request: Request,
+	headers: Record<string, string>,
+	identity: Identity,
+): Promise<Response> {
+	const body = await readJson(request);
+	const endpoint = requireString(body, "endpoint");
+	const p256dh = requireString(body, "p256dh");
+	const auth = requireString(body, "auth");
+
+	if (endpoint.length > 1000) throw new ValidationError("Invalid endpoint");
+	if (!/^https?:\/\//i.test(endpoint)) throw new ValidationError("Invalid endpoint");
+
+	await query(
+		`insert into push_subscription (user_email, endpoint, p256dh, auth)
+		 values ($1, $2, $3, $4)
+		 on conflict (endpoint) do update
+		 set user_email = excluded.user_email, p256dh = excluded.p256dh, auth = excluded.auth`,
+		[identity.email, endpoint, p256dh, auth],
+	);
+
+	return json({ ok: true }, 200, headers);
+}
+
+async function unsubscribePush(
+	request: Request,
+	headers: Record<string, string>,
+	identity: Identity,
+): Promise<Response> {
+	const body = await readJson(request);
+	const endpoint = requireString(body, "endpoint");
+	await query(`delete from push_subscription where endpoint = $1 and lower(user_email) = lower($2)`, [
+		endpoint,
+		identity.email,
+	]);
+	return json({ ok: true }, 200, headers);
+}
+
 type AlertRow = {
 	id: string;
 	currency: string;
@@ -920,6 +1014,9 @@ const handler = {
 			if (path === "/currencies" && request.method === "GET") return await listCurrencies(cors);
 			if (path === "/alerts" && request.method === "GET") return await listAlerts(auth, cors);
 			if (path === "/alerts/read" && request.method === "POST") return await markAlertsRead(request, cors, auth);
+			if (path === "/push/key" && request.method === "GET") return pushKeyResponse(cors);
+			if (path === "/push/subscribe" && request.method === "POST") return await subscribePush(request, cors, auth);
+			if (path === "/push/unsubscribe" && request.method === "POST") return await unsubscribePush(request, cors, auth);
 			if (path === "/products/import" && request.method === "POST") return await importProducts(request, cors);
 
 			return json({ error: "Not found" }, 404, cors);
