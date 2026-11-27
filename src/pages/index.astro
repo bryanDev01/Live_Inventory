@@ -1,131 +1,490 @@
 ---
 import Layout from '../layouts/Layout.astro';
+
+const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9njz-api.compute.c-9.us-east-2.aws.neon.tech';
 ---
 
 <Layout>
-	<main class="app-shell">
-		<section class="login-view" id="login-view" aria-labelledby="intro-title">
+	<main class="app-shell" data-api={apiUrl}>
+		<section class="login-view" id="login-view" aria-labelledby="login-title">
 			<div class="intro-panel">
 				<p class="section-label">Inventario privado</p>
-				<h1 id="intro-title">Tu inventario, con la tasa de referencia a la vista.</h1>
+				<h1>Tu inventario, con la tasa a la vista.</h1>
 				<p class="intro-copy">
-					Consulta los valores relacionados con la tasa de El Toque. Tú decides si cambias los precios de
-					venta.
+					Registra productos con precio de compra y venta. La app calcula el equivalente en CUP y la ganancia.
+					Tú decides si cambias el precio de venta.
 				</p>
 			</div>
 
-			<section class="access-panel" aria-labelledby="login-title">
+			<section class="panel access-panel" aria-labelledby="login-title">
 				<p class="section-label">Acceso</p>
 				<h2 id="login-title">Iniciar sesión</h2>
-				<p class="access-copy">Ingresa tu nombre y contraseña para ver el inventario.</p>
 
-				<form id="login-form" autocomplete="off" novalidate>
+				<form id="login-form" novalidate>
 					<div class="field-group">
 						<label for="user-name">Nombre</label>
-						<input id="user-name" type="text" autocomplete="off" />
+						<input id="user-name" name="name" type="text" autocomplete="username" required />
 					</div>
 					<div class="field-group">
 						<label for="user-password">Contraseña</label>
-						<input id="user-password" type="password" autocomplete="off" />
+						<input id="user-password" name="password" type="password" autocomplete="current-password" required />
 					</div>
-					<p class="prototype-note" id="prototype-note">
-						Prototipo visual. No se validan ni guardan los datos de acceso.
-					</p>
-					<button class="primary-button" type="submit">Entrar</button>
+					<p class="form-error" id="login-error" role="alert" hidden></p>
+					<button class="primary-button" id="login-submit" type="submit">Entrar</button>
 				</form>
 			</section>
 		</section>
 
-		<section class="home-view" id="home-view" aria-labelledby="welcome-title" aria-live="polite" tabindex="-1" hidden>
+		<section class="home-view" id="home-view" aria-labelledby="welcome-title" hidden>
 			<header class="home-header">
 				<div>
 					<p class="section-label">Inventario privado</p>
 					<h1 id="welcome-title">Bienvenido</h1>
-					<p class="home-copy">Tu información aparecerá aquí.</p>
+					<p class="home-copy" id="rate-summary">Cargando la tasa.</p>
 				</div>
-				<button class="secondary-button" id="return-button" type="button">Volver al acceso</button>
+				<button class="secondary-button" id="logout-button" type="button">Salir</button>
 			</header>
 
-			<section class="empty-state" aria-labelledby="empty-title">
-				<p class="section-label">Productos</p>
-				<h2 id="empty-title">Todavía no hay productos</h2>
-				<p>Esta maqueta no contiene datos reales.</p>
+			<div class="content-grid">
+				<section class="panel" aria-labelledby="rate-title">
+					<p class="section-label">Tasa de referencia</p>
+					<h2 id="rate-title">CUP por 1 USD</h2>
+					<p class="panel-copy" id="rate-status">Sin tasa registrada.</p>
+
+					<form id="rate-form" class="inline-form" novalidate>
+						<div class="field-group">
+							<label for="rate-value">Nueva tasa</label>
+							<input id="rate-value" name="rate" type="text" inputmode="decimal" placeholder="Ejemplo: 520.50" />
+						</div>
+						<button class="primary-button compact" type="submit">Guardar tasa</button>
+					</form>
+					<p class="form-error" id="rate-error" role="alert" hidden></p>
+					<p class="panel-note">
+						La tasa se guarda manualmente mientras El Toque no entregue la clave. Queda registrada con su hora.
+						Nunca se cambia el precio de venta automáticamente.
+					</p>
+				</section>
+
+				<section class="panel" aria-labelledby="mode-title">
+					<p class="section-label">Ganancia</p>
+					<h2 id="mode-title">Qué porcentaje ves primero</h2>
+					<p class="panel-copy">Los dos se calculan siempre. Elige cuál encabeza la lista.</p>
+
+					<form id="mode-form" class="mode-options">
+						<label class="mode-option">
+							<input type="radio" name="profitMode" value="margin" />
+							<span><strong>Margen</strong> sobre el precio de venta</span>
+						</label>
+						<label class="mode-option">
+							<input type="radio" name="profitMode" value="markup" />
+							<span><strong>Markup</strong> sobre el precio de compra</span>
+						</label>
+					</form>
+					<p class="form-error" id="mode-error" role="alert" hidden></p>
+				</section>
+			</div>
+
+			<section class="panel products-panel" aria-labelledby="products-title">
+				<div class="panel-heading">
+					<div>
+						<p class="section-label">Productos</p>
+						<h2 id="products-title">Lista</h2>
+					</div>
+					<p class="count-badge" id="product-count">0 productos</p>
+				</div>
+
+				<form id="product-form" class="product-form" novalidate>
+					<div class="field-group">
+						<label for="product-name">Nombre</label>
+						<input id="product-name" name="name" type="text" required />
+					</div>
+					<div class="field-group">
+						<label for="product-purchase">Precio de compra (USD)</label>
+						<input id="product-purchase" name="purchaseAmount" type="text" inputmode="decimal" required />
+					</div>
+					<div class="field-group">
+						<label for="product-sale">Precio de venta (USD)</label>
+						<input id="product-sale" name="saleAmount" type="text" inputmode="decimal" required />
+					</div>
+					<button class="primary-button compact" id="product-submit" type="submit">Añadir producto</button>
+				</form>
+				<p class="form-error" id="product-error" role="alert" hidden></p>
+
+				<p class="empty-state" id="products-empty">Todavía no hay productos.</p>
+				<ul class="product-list" id="product-list"></ul>
 			</section>
 		</section>
 	</main>
 
+	<template id="product-template">
+		<li class="product-card">
+			<div class="product-head">
+				<h3 class="product-name"></h3>
+				<button class="link-button product-remove" type="button">Eliminar</button>
+			</div>
+			<dl class="product-figures">
+				<div><dt>Compra</dt><dd class="product-purchase"></dd></div>
+				<div><dt>Venta</dt><dd class="product-sale"></dd></div>
+				<div class="figure-cup"><dt>Equivalente en CUP</dt><dd class="product-cup"></dd></div>
+			</dl>
+			<div class="product-profit">
+				<span class="profit-pill product-margin"></span>
+				<span class="profit-pill product-markup"></span>
+			</div>
+			<p class="product-meta"></p>
+		</li>
+	</template>
+
 	<script>
-		const loginForm = document.querySelector<HTMLFormElement>('#login-form');
+		const shell = document.querySelector<HTMLElement>('.app-shell');
+		const apiUrl = shell?.dataset.api ?? '';
+
 		const loginView = document.querySelector<HTMLElement>('#login-view');
 		const homeView = document.querySelector<HTMLElement>('#home-view');
-		const userName = document.querySelector<HTMLInputElement>('#user-name');
-		const returnButton = document.querySelector<HTMLButtonElement>('#return-button');
+		const loginForm = document.querySelector<HTMLFormElement>('#login-form');
+		const loginError = document.querySelector<HTMLElement>('#login-error');
+		const loginSubmit = document.querySelector<HTMLButtonElement>('#login-submit');
+		const logoutButton = document.querySelector<HTMLButtonElement>('#logout-button');
+		const welcomeTitle = document.querySelector<HTMLElement>('#welcome-title');
+		const rateSummary = document.querySelector<HTMLElement>('#rate-summary');
+		const rateStatus = document.querySelector<HTMLElement>('#rate-status');
+		const rateForm = document.querySelector<HTMLFormElement>('#rate-form');
+		const rateValue = document.querySelector<HTMLInputElement>('#rate-value');
+		const rateError = document.querySelector<HTMLElement>('#rate-error');
+		const modeForm = document.querySelector<HTMLFormElement>('#mode-form');
+		const modeError = document.querySelector<HTMLElement>('#mode-error');
+		const productForm = document.querySelector<HTMLFormElement>('#product-form');
+		const productError = document.querySelector<HTMLElement>('#product-error');
+		const productSubmit = document.querySelector<HTMLButtonElement>('#product-submit');
+		const productList = document.querySelector<HTMLUListElement>('#product-list');
+		const productsEmpty = document.querySelector<HTMLElement>('#products-empty');
+		const productCount = document.querySelector<HTMLElement>('#product-count');
+		const template = document.querySelector<HTMLTemplateElement>('#product-template');
 
-		loginForm?.addEventListener('submit', (event) => {
-			event.preventDefault();
-			loginForm.reset();
+		type Rate = { cupPerUnit: string; source: string; observedAt: string; fetchedAt: string };
+		type Product = {
+			id: string;
+			name: string;
+			purchaseAmount: string;
+			purchaseCurrency: string;
+			saleAmount: string;
+			saleCurrency: string;
+			cupEquivalent: string | null;
+			cupUnavailable: string | null;
+			rate: Rate | null;
+			profitMargin: string | null;
+			profitMarkup: string | null;
+		};
+		type Session = { token: string; name: string };
+
+		let session: Session | null = null;
+		let profitMode: 'margin' | 'markup' | null = null;
+
+		function showError(element: HTMLElement | null, message: string) {
+			if (!element) return;
+			element.textContent = message;
+			element.hidden = !message;
+		}
+
+		function clearErrors() {
+			showError(loginError, '');
+			showError(rateError, '');
+			showError(modeError, '');
+			showError(productError, '');
+		}
+
+		async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
+			const headers: Record<string, string> = { 'content-type': 'application/json', ...(init.headers as Record<string, string>) };
+			if (token) headers.authorization = `Bearer ${token}`;
+
+			const response = await fetch(`${apiUrl}${path}`, { ...init, headers });
+			const text = await response.text();
+			const body = text ? JSON.parse(text) : null;
+
+			if (!response.ok) {
+				throw new Error(body?.error ?? `Error ${response.status}`);
+			}
+			return body as T;
+		}
+
+		function formatCup(value: string | null): string {
+			if (value === null) return 'Sin tasa';
+			return `${value} CUP`;
+		}
+
+		function formatPercent(value: string | null): string {
+			if (value === null) return 'No disponible';
+			return `${value}%`;
+		}
+
+		function formatTime(value: string): string {
+			return new Date(value).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' });
+		}
+
+		function renderRate(rate: Rate | null) {
+			if (!rateStatus || !rateSummary) return;
+			if (!rate) {
+				rateStatus.textContent = 'Sin tasa registrada. Añade una para ver los equivalentes en CUP.';
+				rateSummary.textContent = 'Sin tasa de referencia.';
+				return;
+			}
+			rateStatus.textContent = `${rate.cupPerUnit} CUP por 1 USD. ${rate.source === 'manual' ? 'Ingresada manualmente' : 'Origen El Toque'}, ${formatTime(rate.observedAt)}.`;
+			rateSummary.textContent = `Tasa actual: ${rate.cupPerUnit} CUP por 1 USD.`;
+		}
+
+		function renderProducts(products: Product[]) {
+			if (!productList || !template || !productsEmpty || !productCount) return;
+
+			productList.textContent = '';
+			productCount.textContent = products.length === 1 ? '1 producto' : `${products.length} productos`;
+			productsEmpty.hidden = products.length > 0;
+
+			for (const product of products) {
+				const node = template.content.firstElementChild?.cloneNode(true) as HTMLElement | null;
+				if (!node) continue;
+
+				node.dataset.id = product.id;
+				node.querySelector('.product-name')!.textContent = product.name;
+				node.querySelector('.product-purchase')!.textContent = `${product.purchaseAmount} ${product.purchaseCurrency}`;
+				node.querySelector('.product-sale')!.textContent = `${product.saleAmount} ${product.saleCurrency}`;
+				node.querySelector('.product-cup')!.textContent = formatCup(product.cupEquivalent);
+
+				const margin = node.querySelector('.product-margin')!;
+				const markup = node.querySelector('.product-markup')!;
+				margin.textContent = `Margen ${formatPercent(product.profitMargin)}`;
+				markup.textContent = `Markup ${formatPercent(product.profitMarkup)}`;
+				margin.classList.toggle('is-primary', profitMode === 'margin');
+				markup.classList.toggle('is-primary', profitMode === 'markup');
+
+				const meta: string[] = [];
+				if (product.cupUnavailable) meta.push(`Falta la tasa para ${product.purchaseCurrency}.`);
+				if (product.rate) meta.push(`Tasa usada: ${product.rate.cupPerUnit} (${formatTime(product.rate.observedAt)}).`);
+				node.querySelector('.product-meta')!.textContent = meta.join(' ');
+
+				productList.append(node);
+			}
+		}
+
+		function renderMode() {
+			if (!modeForm) return;
+			for (const input of modeForm.querySelectorAll<HTMLInputElement>('input[name="profitMode"]')) {
+				input.checked = profitMode !== null && input.value === profitMode;
+			}
+		}
+
+		async function loadData() {
+			if (!session) return;
+			const [productsResponse, rateResponse, settingsResponse] = await Promise.all([
+				request<{ products: Product[] }>('/products', {}, session.token),
+				request<{ currency: string; rate: Rate | null }>('/rate', {}, session.token),
+				request<{ profitMode: 'margin' | 'markup' | null }>('/settings', {}, session.token),
+			]);
+
+			profitMode = settingsResponse.profitMode;
+			renderMode();
+			renderRate(rateResponse.rate);
+			renderProducts(productsResponse.products);
+		}
+
+		function enterApp(next: Session) {
+			session = next;
+			sessionStorage.setItem('inventory-session', JSON.stringify(next));
 			if (loginView) loginView.hidden = true;
-			if (homeView) {
-				homeView.hidden = false;
-				homeView.focus();
+			if (homeView) homeView.hidden = false;
+			if (welcomeTitle) welcomeTitle.textContent = `Hola, ${next.name}`;
+			void loadData().catch(handleExpired);
+		}
+
+		function leaveApp() {
+			session = null;
+			sessionStorage.removeItem('inventory-session');
+			if (homeView) homeView.hidden = true;
+			if (loginView) loginView.hidden = false;
+			document.querySelector<HTMLInputElement>('#user-name')?.focus();
+		}
+
+		function handleExpired(error: unknown) {
+			const message = error instanceof Error ? error.message : 'Error inesperado';
+			if (/token|not allowed|credentials/i.test(message)) {
+				leaveApp();
+				showError(loginError, 'La sesión terminó. Vuelve a entrar.');
+				return;
+			}
+			showError(productError, message);
+		}
+
+		loginForm?.addEventListener('submit', async (event) => {
+			event.preventDefault();
+			clearErrors();
+			const data = new FormData(loginForm);
+			const name = String(data.get('name') ?? '').trim();
+			const password = String(data.get('password') ?? '');
+
+			if (!name || !password) {
+				showError(loginError, 'Escribe tu nombre y contraseña.');
+				return;
+			}
+
+			if (loginSubmit) loginSubmit.disabled = true;
+			try {
+				const result = await request<{ token: string }>('/session', {
+					method: 'POST',
+					body: JSON.stringify({ name, password }),
+				});
+				loginForm.reset();
+				enterApp({ token: result.token, name });
+			} catch {
+				showError(loginError, 'Nombre o contraseña incorrectos.');
+			} finally {
+				if (loginSubmit) loginSubmit.disabled = false;
 			}
 		});
 
-		returnButton?.addEventListener('click', () => {
-			if (homeView) homeView.hidden = true;
-			if (loginView) loginView.hidden = false;
-			userName?.focus();
+		logoutButton?.addEventListener('click', leaveApp);
+
+		rateForm?.addEventListener('submit', async (event) => {
+			event.preventDefault();
+			clearErrors();
+			if (!session || !rateValue) return;
+
+			const value = rateValue.value.trim();
+			if (!value) {
+				showError(rateError, 'Escribe la tasa.');
+				return;
+			}
+
+			try {
+				const result = await request<{ rate: Rate }>('/rate', {
+					method: 'PUT',
+					body: JSON.stringify({ cupPerUsd: value }),
+				}, session.token);
+				renderRate(result.rate);
+				rateForm.reset();
+				await loadData();
+			} catch (error) {
+				showError(rateError, error instanceof Error ? error.message : 'No se pudo guardar la tasa.');
+			}
 		});
 
+		modeForm?.addEventListener('change', async (event) => {
+			clearErrors();
+			if (!session) return;
+			const target = event.target as HTMLInputElement;
+			if (target.name !== 'profitMode') return;
+
+			try {
+				await request('/settings', { method: 'PUT', body: JSON.stringify({ profitMode: target.value }) }, session.token);
+				profitMode = target.value as 'margin' | 'markup';
+				await loadData();
+			} catch (error) {
+				showError(modeError, error instanceof Error ? error.message : 'No se pudo guardar la preferencia.');
+			}
+		});
+
+		productForm?.addEventListener('submit', async (event) => {
+			event.preventDefault();
+			clearErrors();
+			if (!session) return;
+
+			const data = new FormData(productForm);
+			const payload = {
+				name: String(data.get('name') ?? '').trim(),
+				purchaseAmount: String(data.get('purchaseAmount') ?? '').trim(),
+				saleAmount: String(data.get('saleAmount') ?? '').trim(),
+				purchaseCurrency: 'USD',
+				saleCurrency: 'USD',
+			};
+
+			if (!payload.name || !payload.purchaseAmount || !payload.saleAmount) {
+				showError(productError, 'Completa nombre, compra y venta.');
+				return;
+			}
+
+			if (productSubmit) productSubmit.disabled = true;
+			try {
+				await request('/products', { method: 'POST', body: JSON.stringify(payload) }, session.token);
+				productForm.reset();
+				await loadData();
+			} catch (error) {
+				showError(productError, error instanceof Error ? error.message : 'No se pudo guardar el producto.');
+			} finally {
+				if (productSubmit) productSubmit.disabled = false;
+			}
+		});
+
+		productList?.addEventListener('click', async (event) => {
+			const target = event.target as HTMLElement;
+			if (!target.classList.contains('product-remove') || !session) return;
+
+			const card = target.closest<HTMLElement>('.product-card');
+			const id = card?.dataset.id;
+			if (!id) return;
+
+			try {
+				await request(`/products/${id}`, { method: 'DELETE' }, session.token);
+				await loadData();
+			} catch (error) {
+				handleExpired(error);
+			}
+		});
+
+		const stored = sessionStorage.getItem('inventory-session');
+		if (stored) {
+			try {
+				const parsed = JSON.parse(stored) as Session;
+				if (parsed?.token && parsed?.name) enterApp(parsed);
+			} catch {
+				sessionStorage.removeItem('inventory-session');
+			}
+		}
 	</script>
 
 	<style>
 		.app-shell {
-			width: min(100% - 2rem, 70rem);
+			width: min(100% - 2rem, 72rem);
 			min-height: 100svh;
 			margin-inline: auto;
 		}
 
-		.login-view {
-			display: grid;
-			grid-template-columns: 1.08fr 0.92fr;
-			align-items: center;
-			gap: clamp(2rem, 7vw, 6rem);
-			min-height: 100svh;
-			padding-block: 3rem;
-		}
-
-		.intro-panel {
-			max-width: 38rem;
-			padding-block: 2rem;
-		}
-
 		.section-label {
-			margin: 0 0 0.65rem;
+			margin: 0 0 0.5rem;
 			color: var(--color-accent);
-			font-size: 0.875rem;
+			font-size: 0.8125rem;
 			font-weight: 700;
-			letter-spacing: 0.04em;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
 		}
 
 		h1,
 		h2,
+		h3,
 		p {
 			margin-top: 0;
 		}
 
-		.intro-panel h1 {
-			max-width: 12ch;
+		.login-view {
+			display: grid;
+			grid-template-columns: 1.1fr 0.9fr;
+			align-items: center;
+			gap: clamp(2rem, 7vw, 5rem);
+			min-height: 100svh;
+			padding-block: 3rem;
+		}
+
+		.login-view h1 {
+			max-width: 13ch;
 			margin-bottom: 1rem;
-			font-size: clamp(2.25rem, 4vw, 3.25rem);
+			font-size: clamp(2.2rem, 4vw, 3.2rem);
 			letter-spacing: -0.03em;
 			line-height: 1.08;
 		}
 
 		.intro-copy,
-		.access-copy,
 		.home-copy,
-		.empty-state > p:last-child {
+		.panel-copy,
+		.panel-note,
+		.product-meta,
+		.empty-state {
 			color: var(--color-muted);
 		}
 
@@ -135,27 +494,19 @@ import Layout from '../layouts/Layout.astro';
 			font-size: 1.125rem;
 		}
 
-		.access-panel,
-		.empty-state {
+		.panel {
 			border: 1px solid var(--color-border);
 			border-radius: var(--radius-panel);
 			background: var(--color-surface);
-		}
-
-		.access-panel {
-			padding: clamp(1.5rem, 3vw, 2.25rem);
+			padding: clamp(1.25rem, 3vw, 2rem);
 		}
 
 		.access-panel h2,
-		.empty-state h2 {
+		.panel h2 {
 			margin-bottom: 0.5rem;
 			font-size: 1.5rem;
 			letter-spacing: -0.02em;
 			line-height: 1.2;
-		}
-
-		.access-copy {
-			margin-bottom: 1.5rem;
 		}
 
 		.field-group {
@@ -164,14 +515,14 @@ import Layout from '../layouts/Layout.astro';
 
 		label {
 			display: block;
-			margin-bottom: 0.4rem;
+			margin-bottom: 0.35rem;
 			font-weight: 600;
 		}
 
 		input {
 			width: 100%;
 			min-height: 3rem;
-			padding: 0.65rem 0.75rem;
+			padding: 0.6rem 0.75rem;
 			border: 1px solid var(--color-border);
 			border-radius: var(--radius-field);
 			background: var(--color-surface);
@@ -182,16 +533,10 @@ import Layout from '../layouts/Layout.astro';
 			border-color: var(--color-accent);
 		}
 
-		.prototype-note {
-			margin-bottom: 1rem;
-			color: var(--color-muted);
-			font-size: 0.875rem;
-		}
-
 		.primary-button,
 		.secondary-button {
 			min-height: 3rem;
-			padding: 0.65rem 1rem;
+			padding: 0.6rem 1rem;
 			border-radius: var(--radius-button);
 			font-weight: 700;
 			cursor: pointer;
@@ -207,6 +552,11 @@ import Layout from '../layouts/Layout.astro';
 		.primary-button:hover:not(:disabled) {
 			border-color: var(--color-accent-hover);
 			background: var(--color-accent-hover);
+		}
+
+		.primary-button.compact {
+			width: auto;
+			align-self: end;
 		}
 
 		.secondary-button {
@@ -226,22 +576,37 @@ import Layout from '../layouts/Layout.astro';
 			opacity: 0.65;
 		}
 
+		.link-button {
+			border: 0;
+			background: none;
+			padding: 0;
+			color: var(--color-accent);
+			font-weight: 600;
+			text-decoration: underline;
+			cursor: pointer;
+		}
+
+		.form-error {
+			margin-bottom: 0.75rem;
+			color: #8a2c1e;
+			font-weight: 600;
+		}
+
 		.home-view {
-			min-height: 100svh;
-			padding-block: clamp(2rem, 7vh, 5rem);
+			padding-block: clamp(2rem, 6vh, 4rem) 4rem;
 		}
 
 		.home-header {
 			display: flex;
-			align-items: center;
+			align-items: flex-start;
 			justify-content: space-between;
 			gap: 1.5rem;
-			margin-bottom: 3rem;
+			margin-bottom: 2rem;
 		}
 
 		.home-header h1 {
 			margin-bottom: 0.35rem;
-			font-size: clamp(2rem, 4vw, 2.75rem);
+			font-size: clamp(1.9rem, 3.5vw, 2.6rem);
 			letter-spacing: -0.03em;
 			line-height: 1.1;
 		}
@@ -250,18 +615,186 @@ import Layout from '../layouts/Layout.astro';
 			margin-bottom: 0;
 		}
 
-		.empty-state {
-			max-width: 52rem;
-			min-height: 15rem;
-			padding: clamp(1.5rem, 4vw, 3rem);
+		.content-grid {
+			display: grid;
+			grid-template-columns: 1.15fr 0.85fr;
+			gap: 1.25rem;
+			margin-bottom: 1.25rem;
 		}
 
-		.empty-state h2 {
+		.inline-form {
+			display: grid;
+			grid-template-columns: 1fr auto;
+			gap: 0.75rem;
+			align-items: end;
+			margin-bottom: 0.75rem;
+		}
+
+		.inline-form .field-group {
+			margin-bottom: 0;
+		}
+
+		.panel-note {
+			margin-bottom: 0;
+			font-size: 0.875rem;
+		}
+
+		.mode-options {
+			display: grid;
+			gap: 0.65rem;
+			margin-bottom: 0;
+		}
+
+		.mode-option {
+			display: flex;
+			align-items: flex-start;
+			gap: 0.6rem;
+			padding: 0.7rem 0.8rem;
+			border: 1px solid var(--color-border);
+			border-radius: var(--radius-field);
+			font-weight: 400;
+			cursor: pointer;
+		}
+
+		.mode-option:has(input:checked) {
+			border-color: var(--color-accent);
+		}
+
+		.mode-option input {
+			width: auto;
+			min-height: auto;
+			margin-top: 0.25rem;
+		}
+
+		.products-panel {
+			padding-bottom: 1.75rem;
+		}
+
+		.panel-heading {
+			display: flex;
+			align-items: flex-end;
+			justify-content: space-between;
+			gap: 1rem;
+			margin-bottom: 1rem;
+		}
+
+		.panel-heading h2 {
+			margin-bottom: 0;
+		}
+
+		.count-badge {
+			margin: 0;
+			color: var(--color-muted);
+			font-size: 0.875rem;
+		}
+
+		.product-form {
+			display: grid;
+			grid-template-columns: 1.3fr 1fr 1fr auto;
+			gap: 0.75rem;
+			align-items: end;
+			padding-bottom: 1.25rem;
+			border-bottom: 1px solid var(--color-border);
+			margin-bottom: 1.25rem;
+		}
+
+		.product-form .field-group {
+			margin-bottom: 0;
+		}
+
+		.product-list {
+			display: grid;
+			gap: 0.9rem;
+			margin: 0;
+			padding: 0;
+			list-style: none;
+		}
+
+		.product-card {
+			padding: 1rem 1.1rem;
+			border: 1px solid var(--color-border);
+			border-radius: var(--radius-field);
+		}
+
+		.product-head {
+			display: flex;
+			align-items: baseline;
+			justify-content: space-between;
+			gap: 1rem;
+			margin-bottom: 0.75rem;
+		}
+
+		.product-name {
+			margin: 0;
+			font-size: 1.125rem;
+			letter-spacing: -0.01em;
+		}
+
+		.product-figures {
+			display: grid;
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 0.75rem;
+			margin: 0 0 0.85rem;
+		}
+
+		.product-figures dt {
+			color: var(--color-muted);
+			font-size: 0.8125rem;
+		}
+
+		.product-figures dd {
+			margin: 0.15rem 0 0;
+			font-variant-numeric: tabular-nums;
+			font-weight: 700;
+		}
+
+		.figure-cup dd {
+			color: var(--color-accent);
+		}
+
+		.product-profit {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 0.5rem;
 			margin-bottom: 0.5rem;
 		}
 
-		.empty-state > p:last-child {
+		.profit-pill {
+			padding: 0.2rem 0.6rem;
+			border: 1px solid var(--color-border);
+			border-radius: 999px;
+			font-size: 0.8125rem;
+			font-variant-numeric: tabular-nums;
+		}
+
+		.profit-pill.is-primary {
+			border-color: var(--color-accent);
+			background: var(--color-accent);
+			color: var(--color-on-accent);
+		}
+
+		.product-meta {
+			margin: 0;
+			font-size: 0.8125rem;
+		}
+
+		.empty-state {
 			margin-bottom: 0;
+			padding-block: 1rem;
+		}
+
+		@media (max-width: 52rem) {
+			.content-grid {
+				grid-template-columns: 1fr;
+			}
+
+			.product-form {
+				grid-template-columns: 1fr;
+			}
+
+			.primary-button.compact {
+				width: 100%;
+			}
 		}
 
 		@media (max-width: 44rem) {
@@ -276,23 +809,16 @@ import Layout from '../layouts/Layout.astro';
 				padding-block: 1.5rem;
 			}
 
-			.intro-panel {
-				padding-block: 0;
-			}
-
-			.intro-panel h1 {
-				max-width: 16ch;
-				font-size: clamp(2rem, 9vw, 2.75rem);
-			}
-
-			.intro-copy {
-				font-size: 1rem;
-			}
-
 			.home-header {
-				align-items: flex-start;
 				flex-direction: column;
-				margin-bottom: 2rem;
+			}
+
+			.inline-form {
+				grid-template-columns: 1fr;
+			}
+
+			.product-figures {
+				grid-template-columns: 1fr 1fr;
 			}
 		}
 	</style>
