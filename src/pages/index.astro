@@ -49,6 +49,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				<section class="panel" id="rate-panel" aria-labelledby="rate-title" hidden>
 					<p class="section-label">Tasa de referencia</p>
 					<h2 id="rate-title">CUP por 1 USD</h2>
+					<p class="rate-figure" id="rate-figure">Sin tasa</p>
 					<p class="panel-copy" id="rate-status">Sin tasa registrada.</p>
 
 					<form id="rate-form" class="inline-form" novalidate>
@@ -219,6 +220,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		const welcomeTitle = document.querySelector<HTMLElement>('#welcome-title');
 		const rateSummary = document.querySelector<HTMLElement>('#rate-summary');
 		const rateStatus = document.querySelector<HTMLElement>('#rate-status');
+		const rateFigure = document.querySelector<HTMLElement>('#rate-figure');
 		const rateForm = document.querySelector<HTMLFormElement>('#rate-form');
 		const rateValue = document.querySelector<HTMLInputElement>('#rate-value');
 		const rateError = document.querySelector<HTMLElement>('#rate-error');
@@ -428,11 +430,13 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		function renderRate(rate: Rate | null) {
 			if (!rateStatus || !rateSummary) return;
 			if (!rate) {
+				if (rateFigure) rateFigure.textContent = 'Sin tasa';
 				rateStatus.textContent = 'Sin tasa registrada. Añade una para ver los equivalentes en CUP.';
 				rateSummary.textContent = 'Sin tasa de referencia.';
 				return;
 			}
-			rateStatus.textContent = `${rate.cupPerUnit} CUP por 1 USD. ${rate.source === 'manual' ? 'Ingresada manualmente' : 'Origen El Toque'}, ${formatTime(rate.observedAt)}.`;
+			if (rateFigure) rateFigure.textContent = rate.cupPerUnit;
+			rateStatus.textContent = `CUP por 1 USD. ${rate.source === 'manual' ? 'Ingresada manualmente' : 'Origen El Toque'}, ${formatTime(rate.observedAt)}.`;
 			rateSummary.textContent = `Tasa actual: ${rate.cupPerUnit} CUP por 1 USD.`;
 		}
 
@@ -1027,6 +1031,16 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 		.inline-form .field-group {
 			margin-bottom: 0;
+		}
+
+		.rate-figure {
+			margin: 0.1rem 0 0.35rem;
+			color: #151a19;
+			font-size: clamp(2.25rem, 5vw, 3.25rem);
+			font-weight: 800;
+			letter-spacing: -0.03em;
+			line-height: 1;
+			font-variant-numeric: tabular-nums;
 		}
 
 		.panel-note {
