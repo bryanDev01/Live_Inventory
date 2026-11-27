@@ -76,7 +76,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 					</form>
 					<p class="form-error" id="rate-error" role="alert" hidden></p>
 					<p class="panel-note">
-						La tasa se guarda manualmente mientras El Toque no entregue la clave. Queda registrada con su hora.
+						La tasa de referencia se actualiza desde el servidor. Queda registrada con su hora.
 						Nunca se cambia el precio de venta automáticamente.
 					</p>
 				</section>
@@ -455,7 +455,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				return;
 			}
 			if (dayRate) dayRate.textContent = `${rate.cupPerUnit} CUP`;
-			rateStatus.textContent = `${rate.cupPerUnit} CUP por 1 USD. ${rate.source === 'manual' ? 'Ingresada manualmente' : 'Origen El Toque'}, ${formatTime(rate.observedAt)}.`;
+			rateStatus.textContent = `${rate.cupPerUnit} CUP por 1 USD. Registrada ${formatTime(rate.observedAt)}.`;
 			rateSummary.textContent = `1 USD = ${rate.cupPerUnit} CUP. Actualizada ${formatTime(rate.observedAt)}.`;
 		}
 
@@ -474,10 +474,10 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 		function alertMessage(alert: Alert): string {
 			if (alert.direction === 'first' || alert.previousRate === null) {
-				return `Tasa registrada: ${alert.newRate} CUP por 1 USD.`;
+				return `Tasa de referencia: ${alert.newRate} CUP por 1 USD.`;
 			}
 			const verb = alert.direction === 'up' ? 'subió' : 'bajó';
-			return `La tasa ${verb} de ${alert.previousRate} a ${alert.newRate} CUP por 1 USD. Revisa tus precios.`;
+			return `La tasa de referencia ${verb} de ${alert.previousRate} a ${alert.newRate} CUP por 1 USD. Revisa tus precios.`;
 		}
 
 		function notifyNewAlerts(alerts: Alert[]) {

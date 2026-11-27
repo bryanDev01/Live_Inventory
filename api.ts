@@ -502,12 +502,12 @@ async function putRate(
 	// Notify every subscribed device. The admin's change is the only trigger today.
 	const savedValue = parseDecimal(String(saved.cup_per_unit));
 	const savedText = formatRounded(savedValue, 2);
-	let pushBody = `Tasa registrada en ${savedText} CUP por 1 USD.`;
+	let pushBody = `Tasa de referencia: ${savedText} CUP por 1 USD.`;
 	if (latest) {
 		const previousValue = parseDecimal(String(latest.cup_per_unit));
 		const previousText = formatRounded(previousValue, 2);
 		const verb = savedValue.n * previousValue.d > previousValue.n * savedValue.d ? "subió" : "bajó";
-		pushBody = `La tasa ${verb} de ${previousText} a ${savedText} CUP por 1 USD. Revisa tus precios.`;
+		pushBody = `La tasa de referencia ${verb} de ${previousText} a ${savedText} CUP por 1 USD. Revisa tus precios.`;
 	}
 	await sendRatePush({ title: "Cambio en la tasa", body: pushBody });
 
