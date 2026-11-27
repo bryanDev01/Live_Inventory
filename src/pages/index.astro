@@ -841,7 +841,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 	<style>
 		.app-shell {
-			width: min(100% - 1rem, 104rem);
+			width: min(100% - 2rem, 72rem);
 			min-height: 100svh;
 			margin-inline: auto;
 		}
@@ -1090,6 +1090,9 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		.products-panel {
 			padding-bottom: 1.75rem;
 			padding-inline: clamp(0.75rem, 1.5vw, 1.5rem);
+			/* The table needs room; the rest of the page keeps its narrow reading width. */
+			width: min(100vw - 2rem, 104rem);
+			margin-inline: calc((100% - min(100vw - 2rem, 104rem)) / 2);
 		}
 
 		.panel-heading {
