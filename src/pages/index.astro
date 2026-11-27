@@ -46,7 +46,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			</header>
 
 			<div class="content-grid">
-				<section class="panel" aria-labelledby="rate-title">
+				<section class="panel" id="rate-panel" aria-labelledby="rate-title" hidden>
 					<p class="section-label">Tasa de referencia</p>
 					<h2 id="rate-title">CUP por 1 USD</h2>
 					<p class="panel-copy" id="rate-status">Sin tasa registrada.</p>
@@ -175,7 +175,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			profitMargin: string | null;
 			profitMarkup: string | null;
 		};
-		type Session = { token: string; name: string };
+		type Session = { token: string; name: string; role: string };
 
 		let session: Session | null = null;
 		let profitMode: 'margin' | 'markup' | null = null;
@@ -258,7 +258,9 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 				const meta: string[] = [];
 				if (product.cupUnavailable) meta.push(`Falta la tasa para ${product.purchaseCurrency}.`);
-				if (product.rate) meta.push(`Tasa usada: ${product.rate.cupPerUnit} (${formatTime(product.rate.observedAt)}).`);
+				if (product.rate && session?.role === 'admin') {
+					meta.push(`Tasa usada: ${product.rate.cupPerUnit} (${formatTime(product.rate.observedAt)}).`);
+				}
 				node.querySelector('.product-meta')!.textContent = meta.join(' ');
 
 				productList.append(node);
@@ -292,6 +294,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			if (loginView) loginView.hidden = true;
 			if (homeView) homeView.hidden = false;
 			if (welcomeTitle) welcomeTitle.textContent = `Hola, ${next.name}`;
+			const ratePanel = document.querySelector<HTMLElement>('#rate-panel');
+			if (ratePanel) ratePanel.hidden = next.role !== 'admin';
 			void loadData().catch(handleExpired);
 		}
 
@@ -327,12 +331,12 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 			if (loginSubmit) loginSubmit.disabled = true;
 			try {
-				const result = await request<{ token: string }>('/session', {
+				const result = await request<{ token: string; role: string }>('/session', {
 					method: 'POST',
 					body: JSON.stringify({ name, password }),
 				});
 				loginForm.reset();
-				enterApp({ token: result.token, name });
+				enterApp({ token: result.token, name, role: result.role });
 			} catch {
 				showError(loginError, 'Nombre o contraseña incorrectos.');
 			} finally {
