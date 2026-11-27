@@ -179,7 +179,7 @@ Formats, column mapping, templates, size limits, duplicate handling and how Word
 6. How scheduling is done: the host's cron, Neon Functions scheduled triggers, or `pg_cron` with scale to zero disabled.
 7. Authentication approach and how user accounts are created.
 8. Profit percentage: owner-confirmed (both shown, user chooses). See B.6.
-9. Currencies selectable per product: owner-confirmed USD only for now. The backend reads the allowed set from ALLOWED_CURRENCIES, never from a hardcoded list.
+9. Currencies selectable per product: owner-confirmed USD, MLC, EUR and CUP (2026-11-27). No currency is preselected. The backend reads the allowed set from ALLOWED_CURRENCIES, never from a hardcoded list. CUP needs no conversion; other currencies need their own stored rate.
 10. Whether non-USD rate changes trigger notifications, and the minimum change that triggers one.
 11. Delivery mechanism (web push is assumed) and push requirements on Android and Windows.
 12. Excel and Word import details (formats, columns, duplicates, limits).
@@ -196,7 +196,11 @@ Formats, column mapping, templates, size limits, duplicate handling and how Word
 - Login is now real (owner-confirmed 2026-11-27): the user types a name and password, and the backend resolves the name to an internal email through `app_user`, then obtains a Neon Auth JWT. Accounts are created only for the known closed group. No public sign-up.
 - The current Neon Function is a secret-protected, read-only health probe. It must not return product data or expose any Neon secrets. Any future product API must authenticate and authorize before accessing user data.
 - Owner-confirmed 2026-11-27: the product phase is authorized. The core schema (`app_user`, `exchange_rate`, `product`, `app_setting`) exists on the `production` branch, and the `api` Function serves the authenticated inventory endpoints. Every request must carry a Neon Auth JWT whose email is mapped in `app_user`; unmapped users are rejected. The `hello` Function stays a read-only, secret-protected diagnostic and never returns product data.
-- Owner-confirmed 2026-11-27: while the El Toque API key is pending, the rate is entered manually and stored with `source = 'manual'`. No scraping of El Toque pages. The manual value is shown as manually entered, with its timestamp.
+- Owner-confirmed 2026-11-27: while the El Toque API key is pending, the rate is entered manually and stored with `source = 'manual'`. No scraping of El Toque pages. The manual value is shown as manually entered, with its timestamp. Rate entry is restricted to the admin account; ordinary users never see the rate controls.
+- Import (owner-confirmed 2026-11-27): Excel or Word table with fixed columns: nombre, precio de compra, moneda de compra, precio de venta, moneda de venta. Always preview first, report errors per row, skip rows identical to an existing product, and insert only on explicit confirmation.
+- Operational note: `neon deploy` can serve a stale bundle for an existing function slug. If a code change does not appear, recreate the function or deploy it with `neon functions deploy <slug> --src <entry>`.
+- Owner-confirmed 2026-11-27: any signed-in user can create, edit (including prices and currencies) and delete products at any time. Product deletion is authorized by the owner; no approval step is required.
+- Import limits are configuration, not code: `IMPORT_MAX_MB`, `IMPORT_MAX_ROWS` and `IMPORT_MAX_UNCOMPRESSED_MB` (the last one guards against archives that expand far beyond their upload size). When unset or invalid, the import endpoint refuses with a configuration error.
 - The AI Gateway is used only to check its model catalog. Do not make model-inference calls or purchase credits without explicit authorization; no AI feature has been selected.
 - Realtime is provisioned and checked with a read-only `SELECT 1`. No product schema or browser live query is implemented. The current remote Realtime origin setting is inherited; do not add product queries or broaden it. A production frontend origin and any allowlist change remain `[OPEN]`.
 

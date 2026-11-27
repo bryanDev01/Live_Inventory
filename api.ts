@@ -1,7 +1,8 @@
 import { attachDatabasePool } from "@neon/functions";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { Pool } from "pg";
-import { cupEquivalent, formatRounded, parseDecimal, profitPercent } from "./src/lib/money";
+import { parseImportFile } from "./import-rows";
+import { canonicalDecimalKey, cupEquivalent, decimalEquals, formatRounded, parseDecimal, profitPercent } from "./src/lib/money";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -12,6 +13,33 @@ const pool = new Pool({
 	connectionTimeoutMillis: 10_000,
 });
 attachDatabasePool(pool);
+
+// A suspended compute can drop idle clients; without this listener Node would crash the process.
+pool.on("error", (error) => {
+	console.error("Database pool error:", error instanceof Error ? error.name : typeof error);
+});
+
+function isConnectionError(error: unknown): boolean {
+	const code = (error as { code?: string } | null)?.code;
+	if (code === "ECONNRESET" || code === "ETIMEDOUT" || code === "57P01" || code === "08006") return true;
+	// A cold start often surfaces as a connection timeout without a code.
+	return /timeout|terminat|connection/i.test((error as Error | null)?.message ?? "");
+}
+
+// Writes are never retried: a lost acknowledgement would duplicate the row.
+async function query<T = unknown>(text: string, params: unknown[] = []) {
+	return pool.query<T>(text, params);
+}
+
+// Reads may be retried once, to absorb a Neon cold start.
+async function queryRead<T = unknown>(text: string, params: unknown[] = []) {
+	try {
+		return await pool.query<T>(text, params);
+	} catch (error) {
+		if (!isConnectionError(error)) throw error;
+		return pool.query<T>(text, params);
+	}
+}
 
 const jwksUrl = process.env.NEON_AUTH_JWKS_URL;
 const authBaseUrl = process.env.NEON_AUTH_BASE_URL;
@@ -85,7 +113,11 @@ async function readLimitedText(request: Request, limit: number): Promise<string>
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
-	const text = await readLimitedText(request, MAX_BODY_BYTES);
+	return readJsonLimit(request, MAX_BODY_BYTES);
+}
+
+async function readJsonLimit(request: Request, limit: number): Promise<Record<string, unknown>> {
+	const text = await readLimitedText(request, limit);
 	if (!text) return {};
 
 	let parsed: unknown;
@@ -128,7 +160,13 @@ function requireCurrency(body: Record<string, unknown>, key: string): string {
 
 function requiredAmount(body: Record<string, unknown>, key: string): string {
 	const value = requireString(body, key);
-	parseDecimal(value);
+	let parsed;
+	try {
+		parsed = parseDecimal(value);
+	} catch {
+		throw new ValidationError(`${key} must be a plain decimal, for example 12.50`);
+	}
+	if (parsed.n <= 0n) throw new ValidationError(`${key} must be greater than zero`);
 	return value;
 }
 
@@ -160,7 +198,7 @@ async function authenticate(request: Request): Promise<Identity | Failure> {
 
 	// A database failure here is a service error, not a bad token.
 	try {
-		const { rows } = await pool.query<{ role: string }>(
+		const { rows } = await queryRead<{ role: string }>(
 			`select role from app_user where lower(email) = lower($1) limit 1`,
 			[email],
 		);
@@ -197,12 +235,14 @@ function toRate(row: RateRow | undefined): Rate | null {
 	};
 }
 
+type RateRecord = { display: Rate; exact: string };
+
 // One query for every currency in play, so listing products does not scale queries with rows.
-async function latestRates(currencies: string[]): Promise<Map<string, Rate>> {
-	const rates = new Map<string, Rate>();
+async function latestRates(currencies: string[]): Promise<Map<string, RateRecord>> {
+	const rates = new Map<string, RateRecord>();
 	if (currencies.length === 0) return rates;
 
-	const { rows } = await pool.query<RateRow>(
+	const { rows } = await queryRead<RateRow>(
 		`select distinct on (currency) currency, cup_per_unit, source, observed_at, fetched_at
 		 from exchange_rate
 		 where currency = any($1::text[])
@@ -211,8 +251,9 @@ async function latestRates(currencies: string[]): Promise<Map<string, Rate>> {
 	);
 
 	for (const row of rows) {
-		const rate = toRate(row);
-		if (rate) rates.set(row.currency, rate);
+		const display = toRate(row);
+		// The exact stored value feeds conversions; rounding is for display only.
+		if (display) rates.set(row.currency, { display, exact: String(row.cup_per_unit) });
 	}
 	return rates;
 }
@@ -227,7 +268,7 @@ type ProductRow = {
 };
 
 async function productsPayload(): Promise<unknown[]> {
-	const { rows } = await pool.query<ProductRow>(
+	const { rows } = await queryRead<ProductRow>(
 		`select id, name, purchase_amount, purchase_currency, sale_amount, sale_currency
 		 from product order by lower(name)`,
 	);
@@ -237,7 +278,20 @@ async function productsPayload(): Promise<unknown[]> {
 	return rows.map((row) => {
 		const purchase = String(row.purchase_amount);
 		const sale = String(row.sale_amount);
-		const rate = rates.get(row.purchase_currency) ?? null;
+		const record = rates.get(row.purchase_currency) ?? null;
+		const sameCurrency = row.purchase_currency === row.sale_currency;
+
+		// CUP needs no conversion; other currencies need their own stored rate.
+		let cupEquivalentValue: string | null = null;
+		let cupUnavailable: string | null = null;
+		if (row.purchase_currency === "CUP") {
+			cupEquivalentValue = formatRounded(parseDecimal(purchase), 2);
+		} else if (record) {
+			// Convert with the exact stored rate, then round the result once.
+			cupEquivalentValue = cupEquivalent(purchase, record.exact);
+		} else {
+			cupUnavailable = `no-rate-for-${row.purchase_currency}`;
+		}
 
 		return {
 			id: row.id,
@@ -246,12 +300,14 @@ async function productsPayload(): Promise<unknown[]> {
 			purchaseCurrency: row.purchase_currency,
 			saleAmount: sale,
 			saleCurrency: row.sale_currency,
-			cupEquivalent: rate ? cupEquivalent(purchase, rate.cupPerUnit) : null,
+			cupEquivalent: cupEquivalentValue,
 			// Explicit state instead of a silent null: the UI can explain what is missing.
-			cupUnavailable: rate ? null : `no-rate-for-${row.purchase_currency}`,
-			rate,
-			profitMargin: profitPercent(purchase, sale, "margin"),
-			profitMarkup: profitPercent(purchase, sale, "markup"),
+			cupUnavailable,
+			rate: record?.display ?? null,
+			// Comparing different currencies without an explicit conversion would be meaningless.
+			profitMargin: sameCurrency ? profitPercent(purchase, sale, "margin") : null,
+			profitMarkup: sameCurrency ? profitPercent(purchase, sale, "markup") : null,
+			profitUnavailable: sameCurrency ? null : "different-currencies",
 		};
 	});
 }
@@ -269,7 +325,7 @@ async function createProduct(request: Request, headers: Record<string, string>):
 	const purchaseCurrency = requireCurrency(body, "purchaseCurrency");
 	const saleCurrency = requireCurrency(body, "saleCurrency");
 
-	const { rows } = await pool.query<{ id: string }>(
+	const { rows } = await query<{ id: string }>(
 		`insert into product (name, purchase_amount, purchase_currency, sale_amount, sale_currency)
 		 values ($1, $2, $3, $4, $5) returning id`,
 		[name, purchase, purchaseCurrency, sale, saleCurrency],
@@ -300,7 +356,7 @@ async function updateProduct(
 
 	if (fields.length === 0) throw new ValidationError("Nothing to update");
 
-	const { rowCount } = await pool.query(
+	const { rowCount } = await query(
 		`update product set ${fields.join(", ")}, updated_at = now() where id = $1`,
 		[id, ...values],
 	);
@@ -310,14 +366,14 @@ async function updateProduct(
 }
 
 async function deleteProduct(headers: Record<string, string>, id: string): Promise<Response> {
-	const { rowCount } = await pool.query(`delete from product where id = $1`, [id]);
+	const { rowCount } = await query(`delete from product where id = $1`, [id]);
 	if (rowCount === 0) return json({ error: "Product not found" }, 404, headers);
 	return json({ products: await productsPayload() }, 200, headers);
 }
 
 async function getRate(headers: Record<string, string>): Promise<Response> {
 	const rates = await latestRates([REFERENCE_CURRENCY]);
-	return json({ currency: REFERENCE_CURRENCY, rate: rates.get(REFERENCE_CURRENCY) ?? null }, 200, headers);
+	return json({ currency: REFERENCE_CURRENCY, rate: rates.get(REFERENCE_CURRENCY)?.display ?? null }, 200, headers);
 }
 
 async function putRate(
@@ -330,20 +386,52 @@ async function putRate(
 
 	const body = await readJson(request);
 	const cupPerUsd = requiredAmount(body, "cupPerUsd");
-	if (parseDecimal(cupPerUsd).n <= 0n) throw new ValidationError("cupPerUsd must be greater than zero");
 
-	const { rows } = await pool.query<RateRow>(
+	// A repeated identical value must not add a history row.
+	const current = await queryRead<RateRow>(
+		`select currency, cup_per_unit, source, observed_at, fetched_at
+		 from exchange_rate where currency = $1
+		 order by observed_at desc, fetched_at desc limit 1`,
+		[REFERENCE_CURRENCY],
+	);
+	const latest = current.rows[0];
+	const incoming = parseDecimal(cupPerUsd);
+	if (latest) {
+		const stored = parseDecimal(String(latest.cup_per_unit));
+		if (decimalEquals(stored, incoming)) {
+			return json({ currency: REFERENCE_CURRENCY, rate: toRate(latest) }, 200, headers);
+		}
+	}
+
+	// Uniqueness is enforced by the (currency, source, observed_at) constraint in
+	// db/migrations/001_core.sql, so a concurrent insert cannot create a duplicate.
+	const { rows } = await query<RateRow>(
 		`insert into exchange_rate (currency, cup_per_unit, source, observed_at)
-		 values ($1, $2, 'manual', now())
+		 select $1, $2, 'manual', date_trunc('minute', now())
+		 on conflict (currency, source, observed_at) do nothing
 		 returning currency, cup_per_unit, source, observed_at, fetched_at`,
 		[REFERENCE_CURRENCY, cupPerUsd],
 	);
+
+	if (!rows[0]) {
+		// The row existed already: identical value means success, a different one is a real conflict.
+		const latest = await queryRead<RateRow>(
+			`select currency, cup_per_unit, source, observed_at, fetched_at
+			 from exchange_rate where currency = $1 order by observed_at desc, fetched_at desc limit 1`,
+			[REFERENCE_CURRENCY],
+		);
+		const stored = latest.rows[0];
+		if (stored && decimalEquals(parseDecimal(String(stored.cup_per_unit)), parseDecimal(cupPerUsd))) {
+			return json({ currency: REFERENCE_CURRENCY, rate: toRate(stored) }, 200, headers);
+		}
+		return json({ error: "A different rate was already recorded this minute" }, 409, headers);
+	}
 
 	return json({ currency: REFERENCE_CURRENCY, rate: toRate(rows[0]) }, 200, headers);
 }
 
 async function getSettings(headers: Record<string, string>): Promise<Response> {
-	const { rows } = await pool.query<{ value: string }>(
+	const { rows } = await queryRead<{ value: string }>(
 		`select value from app_setting where key = 'profitMode'`,
 	);
 	// No default: an unset preference stays null so the user chooses.
@@ -357,6 +445,10 @@ const MAX_ATTEMPTS = 10;
 
 function isThrottled(key: string): boolean {
 	const now = Date.now();
+	// Drop expired entries so the map cannot grow without bound.
+	for (const [storedKey, stored] of attempts) {
+		if (stored.resetAt <= now) attempts.delete(storedKey);
+	}
 	const entry = attempts.get(key);
 	if (!entry || entry.resetAt <= now) {
 		attempts.set(key, { count: 1, resetAt: now + ATTEMPT_WINDOW_MS });
@@ -377,7 +469,7 @@ async function createSession(request: Request, headers: Record<string, string>):
 	const key = name.toLowerCase();
 	if (isThrottled(key)) return json({ error: "Too many attempts" }, 429, headers);
 
-	const { rows } = await pool.query<{ email: string; role: string }>(
+	const { rows } = await queryRead<{ email: string; role: string }>(
 		`select email, role from app_user where lower(name) = lower($1) limit 1`,
 		[name],
 	);
@@ -401,7 +493,8 @@ async function createSession(request: Request, headers: Record<string, string>):
 	const { token } = (await tokenResponse.json()) as { token?: string };
 	if (!token) return json({ error: "Could not issue a token" }, 502, headers);
 
-	return json({ token, role: account?.role ?? "user" }, 200, headers);
+	if (!account) return json({ error: "Account is not configured" }, 500, headers);
+	return json({ token, role: account.role }, 200, headers);
 }
 
 async function putSettings(request: Request, headers: Record<string, string>): Promise<Response> {
@@ -411,7 +504,7 @@ async function putSettings(request: Request, headers: Record<string, string>): P
 		throw new ValidationError("profitMode must be margin or markup");
 	}
 
-	await pool.query(
+	await query(
 		`insert into app_setting (key, value) values ('profitMode', $1)
 		 on conflict (key) do update set value = excluded.value, updated_at = now()`,
 		[mode],
@@ -422,9 +515,237 @@ async function putSettings(request: Request, headers: Record<string, string>): P
 
 function failureResponse(error: unknown, headers: Record<string, string>): Response {
 	if (error instanceof ValidationError) return json({ error: error.message }, 400, headers);
+	// 23505 is the unique violation raised by the product identity index.
+	if ((error as { code?: string } | null)?.code === "23505") {
+		return json({ error: "An identical product already exists" }, 409, headers);
+	}
+	if (error instanceof ConfigurationError) return json({ error: "Service is not configured" }, 503, headers);
 	// Log only the error type: messages can carry driver or upstream detail.
 	console.error("Unhandled API error:", error instanceof Error ? error.name : typeof error);
 	return json({ error: "Unexpected error" }, 500, headers);
+}
+
+type ImportRowInput = {
+	name: string;
+	purchaseAmount: string;
+	purchaseCurrency: string;
+	saleAmount: string;
+	saleCurrency: string;
+};
+
+type ImportRowResult = {
+	row: number;
+	values: ImportRowInput;
+	status: "ok" | "error" | "duplicate";
+	errors: string[];
+};
+
+// Limits are owner decisions (AGENTS.md B.9), so they must be configured explicitly.
+class ConfigurationError extends Error {}
+
+function importLimits(): { bytes: number; rows: number; uncompressed: number } {
+	const megabytes = Number(process.env.IMPORT_MAX_MB);
+	const rows = Number(process.env.IMPORT_MAX_ROWS);
+	const expanded = Number(process.env.IMPORT_MAX_UNCOMPRESSED_MB);
+	if (
+		!Number.isFinite(megabytes) || megabytes <= 0 ||
+		!Number.isInteger(rows) || rows <= 0 ||
+		!Number.isFinite(expanded) || expanded <= 0
+	) {
+		throw new ConfigurationError("Import limits are not configured");
+	}
+	return { bytes: megabytes * 1024 * 1024, rows, uncompressed: expanded * 1024 * 1024 };
+}
+
+function validateImportRow(row: ImportRowInput): string[] {
+	const errors: string[] = [];
+	if (!row.name.trim()) errors.push("Missing name");
+
+	for (const [label, value] of [
+		["purchase price", row.purchaseAmount],
+		["sale price", row.saleAmount],
+	] as const) {
+		if (!value) {
+			errors.push(`Missing ${label}`);
+			continue;
+		}
+		try {
+			const parsed = parseDecimal(value);
+			if (parsed.n <= 0n) errors.push(`${label} must be greater than zero`);
+		} catch {
+			errors.push(`${label} is not a valid number. Use a dot decimal separator, for example 12.50.`);
+		}
+	}
+
+	for (const [label, value] of [
+		["purchase currency", row.purchaseCurrency],
+		["sale currency", row.saleCurrency],
+	] as const) {
+		const code = value.toUpperCase();
+		if (!/^[A-Z]{3}$/.test(code)) errors.push(`${label} is invalid`);
+		else if (!allowedCurrencies.includes(code)) errors.push(`${label} is not allowed`);
+	}
+
+	return errors;
+}
+
+function productKey(
+	name: string,
+	purchaseAmount: string,
+	purchaseCurrency: string,
+	saleAmount: string,
+	saleCurrency: string,
+): string {
+	return JSON.stringify([
+		name.trim(),
+		canonicalDecimalKey(purchaseAmount),
+		purchaseCurrency.toUpperCase(),
+		canonicalDecimalKey(saleAmount),
+		saleCurrency.toUpperCase(),
+	]);
+}
+
+async function existingProductKeys(): Promise<Set<string>> {
+	const { rows } = await queryRead<{
+		name: string;
+		purchase_amount: string;
+		purchase_currency: string;
+		sale_amount: string;
+		sale_currency: string;
+	}>(`select name, purchase_amount, purchase_currency, sale_amount, sale_currency from product`);
+
+	const keys = new Set<string>();
+	for (const row of rows) {
+		keys.add(
+			productKey(
+				row.name,
+				String(row.purchase_amount),
+				row.purchase_currency,
+				String(row.sale_amount),
+				row.sale_currency,
+			),
+		);
+	}
+
+	return keys;
+}
+
+async function readImport(
+	filename: string,
+	buffer: Buffer,
+	limits: { bytes: number; rows: number; uncompressed: number },
+): Promise<{ rows: ImportRowResult[]; warnings: string[] }> {
+	if (buffer.byteLength > limits.bytes) throw new ValidationError("The file is too large");
+
+	let parsed;
+	try {
+		parsed = await parseImportFile(filename, buffer, limits.uncompressed);
+	} catch (error) {
+		// Client-fixable file problems must be reported, not turned into a 500.
+		throw new ValidationError(error instanceof Error ? error.message : "The file could not be read");
+	}
+
+	if (parsed.rows.length > limits.rows) {
+		throw new ValidationError(`The file has more than ${limits.rows} rows`);
+	}
+
+	const existing = await existingProductKeys();
+	const seen = new Set<string>();
+	const results: ImportRowResult[] = [];
+	const warnings = [...parsed.warnings];
+
+	for (const values of parsed.rows) {
+		const { sourceRow, ...fields } = values;
+		const errors = validateImportRow(fields);
+		let status: ImportRowResult["status"] = errors.length > 0 ? "error" : "ok";
+
+		if (status === "ok") {
+			const key = productKey(
+				fields.name,
+				fields.purchaseAmount,
+				fields.purchaseCurrency,
+				fields.saleAmount,
+				fields.saleCurrency,
+			);
+			if (existing.has(key) || seen.has(key)) status = "duplicate";
+			seen.add(key);
+		}
+
+		results.push({ row: sourceRow, values: fields, status, errors });
+	}
+
+	return { rows: results, warnings };
+}
+
+async function importProducts(request: Request, headers: Record<string, string>): Promise<Response> {
+	const limits = importLimits();
+	const body = await readJsonLimit(request, limits.bytes * 2);
+	const filename = typeof body.filename === "string" ? body.filename : "";
+	const data = typeof body.dataBase64 === "string" ? body.dataBase64 : "";
+	const mode = body.mode === "apply" ? "apply" : "preview";
+	if (!filename || !data) throw new ValidationError("Missing file");
+
+	const buffer = Buffer.from(data, "base64");
+	const { rows: results, warnings } = await readImport(filename, buffer, limits);
+	const summary = {
+		total: results.length,
+		ok: results.filter((row) => row.status === "ok").length,
+		errors: results.filter((row) => row.status === "error").length,
+		duplicates: results.filter((row) => row.status === "duplicate").length,
+	};
+
+	if (mode !== "apply") return json({ mode: "preview", summary, warnings, rows: results }, 200, headers);
+
+	const insertable = results.filter((row) => row.status === "ok");
+	if (insertable.length === 0) {
+		return json({ mode: "apply", summary, warnings, inserted: 0, rows: results }, 200, headers);
+	}
+
+	// Duplicates are blocked by the product_identity_idx unique index in db/migrations/003_product_identity.sql.
+	const client = await pool.connect();
+	const skipped: number[] = [];
+	let inserted = 0;
+	try {
+		await client.query("begin");
+		for (const row of insertable) {
+			const result = await client.query(
+				`insert into product (name, purchase_amount, purchase_currency, sale_amount, sale_currency)
+				 values ($1, $2, $3, $4, $5)
+				 on conflict do nothing
+				 returning id`,
+				[
+					row.values.name,
+					row.values.purchaseAmount,
+					row.values.purchaseCurrency.toUpperCase(),
+					row.values.saleAmount,
+					row.values.saleCurrency.toUpperCase(),
+				],
+			);
+			if (result.rowCount === 1) inserted += 1;
+			else skipped.push(row.row);
+		}
+		await client.query("commit");
+	} catch (error) {
+		await client.query("rollback");
+		throw error;
+	} finally {
+		client.release();
+	}
+
+	if (skipped.length > 0) {
+		warnings.push(`Rows already present, not inserted: ${skipped.join(", ")}.`);
+	}
+
+	return json(
+		{ mode: "apply", summary, warnings, inserted, skipped, products: await productsPayload() },
+		200,
+		headers,
+	);
+}
+
+
+async function listCurrencies(headers: Record<string, string>): Promise<Response> {
+	return json({ currencies: allowedCurrencies }, 200, headers);
 }
 
 const handler = {
@@ -459,6 +780,8 @@ const handler = {
 			if (path === "/rate" && request.method === "PUT") return await putRate(request, cors, auth);
 			if (path === "/settings" && request.method === "GET") return await getSettings(cors);
 			if (path === "/settings" && request.method === "PUT") return await putSettings(request, cors);
+			if (path === "/currencies" && request.method === "GET") return await listCurrencies(cors);
+			if (path === "/products/import" && request.method === "POST") return await importProducts(request, cors);
 
 			return json({ error: "Not found" }, 404, cors);
 		} catch (error) {
