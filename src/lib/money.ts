@@ -33,19 +33,19 @@ export function formatRounded(value: Decimal, decimals: number): string {
 }
 
 // CUP equivalent of an amount, given the rate expressed as CUP per one unit of that amount's currency.
-// The caller must pass the rate stored for the purchase currency; no currency is assumed here.
-export function cupEquivalent(purchaseUsd: string, rateCupPerUsd: string): string {
-  const purchase = parseDecimal(purchaseUsd);
-  const rate = parseDecimal(rateCupPerUsd);
+// The caller owns the currency: this helper assumes no specific one.
+export function cupEquivalent(purchaseAmount: string, ratePerUnitCup: string): string {
+  const purchase = parseDecimal(purchaseAmount);
+  const rate = parseDecimal(ratePerUnitCup);
   return formatRounded({ n: purchase.n * rate.n, d: purchase.d * rate.d }, 2);
 }
 
 // Profit percentage. Returns null when the denominator is zero, so the UI can show "not available".
 //   margin: (sale - purchase) / sale * 100
 //   markup: (sale - purchase) / purchase * 100
-export function profitPercent(purchaseUsd: string, saleUsd: string, mode: ProfitMode): string | null {
-  const purchase = parseDecimal(purchaseUsd);
-  const sale = parseDecimal(saleUsd);
+export function profitPercent(purchaseAmount: string, saleAmount: string, mode: ProfitMode): string | null {
+  const purchase = parseDecimal(purchaseAmount);
+  const sale = parseDecimal(saleAmount);
   const difference = sale.n * purchase.d - purchase.n * sale.d;
 
   if (mode === "margin") {
@@ -74,4 +74,27 @@ export function canonicalDecimalKey(value: string): string {
   }
   const divisor = a === 0n ? 1n : a;
   return `${n / divisor}/${d / divisor}`;
+}
+
+
+export function multiplyDecimals(a: string, b: string): Decimal {
+  const x = parseDecimal(a);
+  const y = parseDecimal(b);
+  return { n: x.n * y.n, d: x.d * y.d };
+}
+
+export function subtractDecimals(a: Decimal, b: Decimal): Decimal {
+  return { n: a.n * b.d - b.n * a.d, d: a.d * b.d };
+}
+
+// Percentage from exact values, so no intermediate rounding happens.
+export function percentOf(purchase: Decimal, sale: Decimal, mode: ProfitMode): string | null {
+  const difference = sale.n * purchase.d - purchase.n * sale.d;
+  const denominator = mode === "margin" ? purchase.d * sale.n : sale.d * purchase.n;
+  if (denominator === 0n) return null;
+  return formatRounded({ n: 100n * difference, d: denominator }, 2);
+}
+
+export function formatDecimal(value: Decimal): string {
+  return formatRounded(value, 2);
 }

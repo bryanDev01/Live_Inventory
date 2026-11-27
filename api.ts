@@ -2,7 +2,18 @@ import { attachDatabasePool } from "@neon/functions";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { Pool } from "pg";
 import { parseImportFile } from "./import-rows";
-import { canonicalDecimalKey, cupEquivalent, decimalEquals, formatRounded, parseDecimal, profitPercent } from "./src/lib/money";
+import {
+	canonicalDecimalKey,
+	decimalEquals,
+	formatDecimal,
+	formatRounded,
+	multiplyDecimals,
+	parseDecimal,
+	percentOf,
+	subtractDecimals,
+	type Decimal,
+} from "./src/lib/money";
+import { createHash } from "node:crypto";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -267,30 +278,55 @@ type ProductRow = {
 	sale_currency: string;
 };
 
-async function productsPayload(): Promise<unknown[]> {
+const PAGE_SIZE = 15;
+
+type ProductPage = { products: unknown[]; page: number; pageSize: number; total: number; pages: number };
+
+async function productsPayload(requestedPage = 1): Promise<ProductPage> {
+	const count = await queryRead<{ total: number }>(`select count(*)::int as total from product`);
+	const total = count.rows[0]?.total ?? 0;
+	const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+	const page = Math.min(Math.max(1, Math.trunc(requestedPage) || 1), pages);
+
 	const { rows } = await queryRead<ProductRow>(
 		`select id, name, purchase_amount, purchase_currency, sale_amount, sale_currency
-		 from product order by lower(name)`,
+		 from product order by lower(name), id
+		 limit $1 offset $2`,
+		[PAGE_SIZE, (page - 1) * PAGE_SIZE],
 	);
 
-	const rates = await latestRates([...new Set(rows.map((row) => row.purchase_currency))]);
+	const currencies = [...new Set(rows.flatMap((row) => [row.purchase_currency, row.sale_currency]))];
+	const rates = await latestRates(currencies);
 
-	return rows.map((row) => {
+	// Exact CUP value as a rational, so profit is computed without intermediate rounding.
+	const toCup = (amount: string, currency: string): { value: Decimal } | { missing: string } => {
+		if (currency === "CUP") return { value: parseDecimal(amount) };
+		const rate = rates.get(currency);
+		if (!rate) return { missing: `no-rate-for-${currency}` };
+		return { value: multiplyDecimals(amount, rate.exact) };
+	};
+
+	const products = rows.map((row) => {
 		const purchase = String(row.purchase_amount);
 		const sale = String(row.sale_amount);
-		const record = rates.get(row.purchase_currency) ?? null;
-		const sameCurrency = row.purchase_currency === row.sale_currency;
+		const purchaseRate = rates.get(row.purchase_currency)?.display ?? null;
+		const saleRate = rates.get(row.sale_currency)?.display ?? null;
 
-		// CUP needs no conversion; other currencies need their own stored rate.
-		let cupEquivalentValue: string | null = null;
-		let cupUnavailable: string | null = null;
-		if (row.purchase_currency === "CUP") {
-			cupEquivalentValue = formatRounded(parseDecimal(purchase), 2);
-		} else if (record) {
-			// Convert with the exact stored rate, then round the result once.
-			cupEquivalentValue = cupEquivalent(purchase, record.exact);
+		const purchaseCup = toCup(purchase, row.purchase_currency);
+		const saleCup = toCup(sale, row.sale_currency);
+
+		// Profit compares both prices in CUP, so different currencies are handled correctly.
+		let profitCup: string | null = null;
+		let profitMargin: string | null = null;
+		let profitMarkup: string | null = null;
+		let profitUnavailable: string | null = null;
+
+		if ("value" in purchaseCup && "value" in saleCup) {
+			profitCup = formatDecimal(subtractDecimals(saleCup.value, purchaseCup.value));
+			profitMargin = percentOf(purchaseCup.value, saleCup.value, "margin");
+			profitMarkup = percentOf(purchaseCup.value, saleCup.value, "markup");
 		} else {
-			cupUnavailable = `no-rate-for-${row.purchase_currency}`;
+			profitUnavailable = "missing" in purchaseCup ? purchaseCup.missing : (saleCup as { missing: string }).missing;
 		}
 
 		return {
@@ -300,20 +336,25 @@ async function productsPayload(): Promise<unknown[]> {
 			purchaseCurrency: row.purchase_currency,
 			saleAmount: sale,
 			saleCurrency: row.sale_currency,
-			cupEquivalent: cupEquivalentValue,
-			// Explicit state instead of a silent null: the UI can explain what is missing.
-			cupUnavailable,
-			rate: record?.display ?? null,
-			// Comparing different currencies without an explicit conversion would be meaningless.
-			profitMargin: sameCurrency ? profitPercent(purchase, sale, "margin") : null,
-			profitMarkup: sameCurrency ? profitPercent(purchase, sale, "markup") : null,
-			profitUnavailable: sameCurrency ? null : "different-currencies",
+			cupEquivalent: "value" in purchaseCup ? formatDecimal(purchaseCup.value) : null,
+			cupUnavailable: "missing" in purchaseCup ? purchaseCup.missing : null,
+			saleCupEquivalent: "value" in saleCup ? formatDecimal(saleCup.value) : null,
+			rate: purchaseRate,
+			saleRate,
+			profitCup,
+			profitMargin,
+			profitMarkup,
+			profitUnavailable,
 		};
 	});
+
+	return { products, page, pageSize: PAGE_SIZE, total, pages };
 }
 
-async function listProducts(headers: Record<string, string>): Promise<Response> {
-	return json({ products: await productsPayload() }, 200, headers);
+async function listProducts(request: Request, headers: Record<string, string>): Promise<Response> {
+	const url = new URL(request.url);
+	const page = Number(url.searchParams.get("page") ?? "1");
+	return json(await productsPayload(page), 200, headers);
 }
 
 async function createProduct(request: Request, headers: Record<string, string>): Promise<Response> {
@@ -331,7 +372,7 @@ async function createProduct(request: Request, headers: Record<string, string>):
 		[name, purchase, purchaseCurrency, sale, saleCurrency],
 	);
 
-	return json({ id: rows[0]?.id, products: await productsPayload() }, 201, headers);
+	return json({ id: rows[0]?.id, ...await productsPayload(1) }, 201, headers);
 }
 
 async function updateProduct(
@@ -362,13 +403,13 @@ async function updateProduct(
 	);
 	if (rowCount === 0) return json({ error: "Product not found" }, 404, headers);
 
-	return json({ products: await productsPayload() }, 200, headers);
+	return json({ ...await productsPayload(1) }, 200, headers);
 }
 
 async function deleteProduct(headers: Record<string, string>, id: string): Promise<Response> {
 	const { rowCount } = await query(`delete from product where id = $1`, [id]);
 	if (rowCount === 0) return json({ error: "Product not found" }, 404, headers);
-	return json({ products: await productsPayload() }, 200, headers);
+	return json({ ...await productsPayload(1) }, 200, headers);
 }
 
 async function getRate(headers: Record<string, string>): Promise<Response> {
@@ -686,6 +727,13 @@ async function importProducts(request: Request, headers: Record<string, string>)
 	if (!filename || !data) throw new ValidationError("Missing file");
 
 	const buffer = Buffer.from(data, "base64");
+	const token = createHash("sha256").update(buffer).digest("hex");
+	const providedToken = typeof body.token === "string" ? body.token : "";
+
+	if (mode === "apply" && providedToken !== token) {
+		throw new ValidationError("Preview the file before importing it");
+	}
+
 	const { rows: results, warnings } = await readImport(filename, buffer, limits);
 	const summary = {
 		total: results.length,
@@ -694,7 +742,7 @@ async function importProducts(request: Request, headers: Record<string, string>)
 		duplicates: results.filter((row) => row.status === "duplicate").length,
 	};
 
-	if (mode !== "apply") return json({ mode: "preview", summary, warnings, rows: results }, 200, headers);
+	if (mode !== "apply") return json({ mode: "preview", token, summary, warnings, rows: results }, 200, headers);
 
 	const insertable = results.filter((row) => row.status === "ok");
 	if (insertable.length === 0) {
@@ -714,7 +762,7 @@ async function importProducts(request: Request, headers: Record<string, string>)
 				 on conflict do nothing
 				 returning id`,
 				[
-					row.values.name,
+					row.values.name.trim(),
 					row.values.purchaseAmount,
 					row.values.purchaseCurrency.toUpperCase(),
 					row.values.saleAmount,
@@ -733,11 +781,20 @@ async function importProducts(request: Request, headers: Record<string, string>)
 	}
 
 	if (skipped.length > 0) {
+		// A row that the database skipped must not still report as ok.
+		const skippedSet = new Set(skipped);
+		for (const row of results) {
+			if (skippedSet.has(row.row) && row.status === "ok") {
+				row.status = "duplicate";
+				summary.ok -= 1;
+				summary.duplicates += 1;
+			}
+		}
 		warnings.push(`Rows already present, not inserted: ${skipped.join(", ")}.`);
 	}
 
 	return json(
-		{ mode: "apply", summary, warnings, inserted, skipped, products: await productsPayload() },
+		{ mode: "apply", summary, warnings, inserted, skipped, ...await productsPayload(1) },
 		200,
 		headers,
 	);
@@ -770,7 +827,7 @@ const handler = {
 		if (isFailure(auth)) return json(auth.body, auth.status, cors);
 
 		try {
-			if (path === "/products" && request.method === "GET") return await listProducts(cors);
+			if (path === "/products" && request.method === "GET") return await listProducts(request, cors);
 			if (path === "/products" && request.method === "POST") return await createProduct(request, cors);
 			if (productMatch && request.method === "PATCH") {
 				return await updateProduct(request, cors, productMatch[1]);
