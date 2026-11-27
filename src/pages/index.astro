@@ -40,6 +40,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				<div>
 					<p class="section-label">Inventario privado</p>
 					<h1 id="welcome-title">Bienvenido</h1>
+					<p class="day-caption">Tasa del día</p>
+					<p class="day-rate" id="day-rate">Sin tasa</p>
 					<p class="home-copy" id="rate-summary">Cargando la tasa.</p>
 				</div>
 				<button class="secondary-button" id="logout-button" type="button">Salir</button>
@@ -65,19 +67,19 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 					</p>
 				</section>
 
-				<section class="panel" aria-labelledby="mode-title">
+				<section class="panel" id="mode-panel" aria-labelledby="mode-title" hidden>
 					<p class="section-label">Ganancia</p>
 					<h2 id="mode-title">Qué porcentaje ves primero</h2>
-					<p class="panel-copy">Los dos se calculan siempre. Elige cuál encabeza la lista.</p>
+					<p class="panel-copy">Los dos porcentajes se calculan siempre. Elige cuál quieres ver primero.</p>
 
 					<form id="mode-form" class="mode-options">
 						<label class="mode-option">
 							<input type="radio" name="profitMode" value="margin" />
-							<span><strong>Margen</strong> sobre el precio de venta</span>
+							<span><strong>Ganancia sobre la venta</strong> (porcentaje del precio de venta)</span>
 						</label>
 						<label class="mode-option">
 							<input type="radio" name="profitMode" value="markup" />
-							<span><strong>Markup</strong> sobre el precio de compra</span>
+							<span><strong>Ganancia sobre la compra</strong> (porcentaje del precio de compra)</span>
 						</label>
 					</form>
 					<p class="form-error" id="mode-error" role="alert" hidden></p>
@@ -119,7 +121,32 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				<p class="form-error" id="product-error" role="alert" hidden></p>
 
 				<p class="empty-state" id="products-empty">Todavía no hay productos.</p>
-				<ul class="product-list" id="product-list"></ul>
+				<p class="list-summary" id="list-summary" hidden></p>
+
+				<div class="table-wrap">
+					<table class="product-table">
+						<thead>
+							<tr>
+								<th scope="col">Producto</th>
+								<th scope="col">Compra</th>
+								<th scope="col">Compra en CUP</th>
+								<th scope="col">Venta</th>
+								<th scope="col">Venta en CUP</th>
+								<th scope="col">Ganancia o pérdida</th>
+								<th scope="col">Sobre la venta</th>
+								<th scope="col">Sobre la compra</th>
+								<th scope="col">Acciones</th>
+							</tr>
+						</thead>
+						<tbody id="product-list"></tbody>
+					</table>
+				</div>
+
+				<nav class="pagination" id="pagination" aria-label="Paginación de productos" hidden>
+					<button class="secondary-button compact" id="prev-page" type="button">Anterior</button>
+					<p class="page-info" id="page-info"></p>
+					<button class="secondary-button compact" id="next-page" type="button">Siguiente</button>
+				</nav>
 			</section>
 
 			<section class="panel import-panel" aria-labelledby="import-title">
@@ -162,25 +189,23 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 	</main>
 
 	<template id="product-template">
-		<li class="product-card">
-			<div class="product-head">
-				<h3 class="product-name"></h3>
-				<div class="product-actions">
-					<button class="link-button product-edit" type="button">Editar</button>
-					<button class="link-button product-remove" type="button">Eliminar</button>
-				</div>
-			</div>
-			<dl class="product-figures">
-				<div><dt>Compra</dt><dd class="product-purchase"></dd></div>
-				<div><dt>Venta</dt><dd class="product-sale"></dd></div>
-				<div class="figure-cup"><dt>Equivalente en CUP</dt><dd class="product-cup"></dd></div>
-			</dl>
-			<div class="product-profit">
-				<span class="profit-pill product-margin"></span>
-				<span class="profit-pill product-markup"></span>
-			</div>
-			<p class="product-meta"></p>
-		</li>
+		<tr class="product-row">
+			<td class="cell-name">
+				<span class="product-name"></span>
+				<span class="row-note"></span>
+			</td>
+			<td class="cell-number product-purchase"></td>
+			<td class="cell-number product-purchase-cup"></td>
+			<td class="cell-number product-sale"></td>
+			<td class="cell-number product-sale-cup"></td>
+			<td class="cell-number product-result"></td>
+			<td class="cell-number product-margin"></td>
+			<td class="cell-number product-markup"></td>
+			<td class="cell-actions">
+				<button class="link-button product-edit" type="button">Editar</button>
+				<button class="link-button product-remove" type="button">Eliminar</button>
+			</td>
+		</tr>
 	</template>
 
 	<script>
@@ -196,6 +221,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		const welcomeTitle = document.querySelector<HTMLElement>('#welcome-title');
 		const rateSummary = document.querySelector<HTMLElement>('#rate-summary');
 		const rateStatus = document.querySelector<HTMLElement>('#rate-status');
+		const dayRate = document.querySelector<HTMLElement>('#day-rate');
 		const rateForm = document.querySelector<HTMLFormElement>('#rate-form');
 		const rateValue = document.querySelector<HTMLInputElement>('#rate-value');
 		const rateError = document.querySelector<HTMLElement>('#rate-error');
@@ -213,7 +239,12 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		const importSummary = document.querySelector<HTMLElement>('#import-summary');
 		const importTableWrap = document.querySelector<HTMLElement>('#import-table-wrap');
 		const importRows = document.querySelector<HTMLElement>('#import-rows');
-		const productList = document.querySelector<HTMLUListElement>('#product-list');
+		const pagination = document.querySelector<HTMLElement>('#pagination');
+		const pageInfo = document.querySelector<HTMLElement>('#page-info');
+		const prevPage = document.querySelector<HTMLButtonElement>('#prev-page');
+		const nextPage = document.querySelector<HTMLButtonElement>('#next-page');
+		const listSummary = document.querySelector<HTMLElement>('#list-summary');
+		const productList = document.querySelector<HTMLTableSectionElement>('#product-list');
 		const productsEmpty = document.querySelector<HTMLElement>('#products-empty');
 		const productCount = document.querySelector<HTMLElement>('#product-count');
 		const template = document.querySelector<HTMLTemplateElement>('#product-template');
@@ -231,7 +262,9 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			rate: Rate | null;
 			profitMargin: string | null;
 			profitMarkup: string | null;
+			profitCup: string | null;
 			profitUnavailable?: string | null;
+			saleCupEquivalent?: string | null;
 		};
 		type Session = { token: string; name: string; role: string };
 
@@ -239,6 +272,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		let profitMode: 'margin' | 'markup' | null = null;
 		let currentProducts: Product[] = [];
 		let currencies: string[] = [];
+		let currentPage = 1;
+		let totalPages = 1;
 
 		function showError(element: HTMLElement | null, message: string) {
 			if (!element) return;
@@ -286,7 +321,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			status: 'ok' | 'error' | 'duplicate';
 			errors: string[];
 		};
-		type ImportResult = { summary: { total: number; ok: number; errors: number; duplicates: number }; rows: ImportRow[]; inserted?: number; warnings?: string[] };
+		type ImportResult = { token?: string; summary: { total: number; ok: number; errors: number; duplicates: number }; rows: ImportRow[]; inserted?: number; warnings?: string[] };
+		let importToken = '';
 
 		function renderImport(result: ImportResult) {
 			if (!importRows || !importSummary || !importTableWrap) return;
@@ -339,11 +375,12 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			const response = await fetch(`${apiUrl}/products/import`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json', authorization: `Bearer ${session.token}` },
-				body: JSON.stringify({ filename: file.name, dataBase64, mode }),
+				body: JSON.stringify({ filename: file.name, dataBase64, mode, token: importToken }),
 			});
 			const text = await response.text();
 			const parsed = text ? JSON.parse(text) : null;
 			if (!response.ok) throw new Error(parsed?.error ?? `Error ${response.status}`);
+			if (parsed?.token) importToken = parsed.token;
 			return parsed as ImportResult;
 		}
 
@@ -371,6 +408,22 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			return `${value}%`;
 		}
 
+		function addCup(amounts: string[]): string {
+			let total = 0n;
+			for (const value of amounts) {
+				const negative = value.startsWith('-');
+				const clean = negative ? value.slice(1) : value;
+				const [whole, fraction = ''] = clean.split('.');
+				const cents = BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
+				total += negative ? -cents : cents;
+			}
+			const negativeTotal = total < 0n;
+			const absolute = negativeTotal ? -total : total;
+			const whole = absolute / 100n;
+			const fraction = String(absolute % 100n).padStart(2, '00');
+			return `${negativeTotal ? '-' : ''}${whole}.${fraction}`;
+		}
+
 		function formatTime(value: string): string {
 			return new Date(value).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' });
 		}
@@ -378,12 +431,14 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		function renderRate(rate: Rate | null) {
 			if (!rateStatus || !rateSummary) return;
 			if (!rate) {
+				if (dayRate) dayRate.textContent = 'Sin tasa';
 				rateStatus.textContent = 'Sin tasa registrada. Añade una para ver los equivalentes en CUP.';
 				rateSummary.textContent = 'Sin tasa de referencia.';
 				return;
 			}
+			if (dayRate) dayRate.textContent = `${rate.cupPerUnit} CUP`;
 			rateStatus.textContent = `${rate.cupPerUnit} CUP por 1 USD. ${rate.source === 'manual' ? 'Ingresada manualmente' : 'Origen El Toque'}, ${formatTime(rate.observedAt)}.`;
-			rateSummary.textContent = `Tasa actual: ${rate.cupPerUnit} CUP por 1 USD.`;
+			rateSummary.textContent = `1 USD = ${rate.cupPerUnit} CUP. Actualizada ${formatTime(rate.observedAt)}.`;
 		}
 
 		function renderProducts(products: Product[]) {
@@ -399,27 +454,58 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				if (!node) continue;
 
 				node.dataset.id = product.id;
-				node.querySelector('.product-name')!.textContent = product.name;
-				node.querySelector('.product-purchase')!.textContent = `${product.purchaseAmount} ${product.purchaseCurrency}`;
-				node.querySelector('.product-sale')!.textContent = `${product.saleAmount} ${product.saleCurrency}`;
-				node.querySelector('.product-cup')!.textContent = formatCup(product.cupEquivalent);
+				node.querySelector(".product-name")!.textContent = product.name;
+				node.querySelector(".product-purchase")!.textContent = `${product.purchaseAmount} ${product.purchaseCurrency}`;
+				node.querySelector(".product-sale")!.textContent = `${product.saleAmount} ${product.saleCurrency}`;
+				node.querySelector(".product-purchase-cup")!.textContent = formatCup(product.cupEquivalent);
+				node.querySelector(".product-sale-cup")!.textContent = formatCup(product.saleCupEquivalent ?? null);
 
-				const margin = node.querySelector('.product-margin')!;
-				const markup = node.querySelector('.product-markup')!;
-				margin.textContent = `Margen ${formatPercent(product.profitMargin)}`;
-				markup.textContent = `Markup ${formatPercent(product.profitMarkup)}`;
-				margin.classList.toggle('is-primary', profitMode === 'margin');
-				markup.classList.toggle('is-primary', profitMode === 'markup');
+				const result = node.querySelector(".product-result")!;
+				if (product.profitCup !== null) {
+					const negative = product.profitCup.startsWith("-");
+					const amount = negative ? product.profitCup.slice(1) : product.profitCup;
+					result.textContent = `${negative ? "Pérdida" : "Ganancia"} ${amount} CUP`;
+					result.classList.toggle("is-loss", negative);
+				} else {
+					result.textContent = "Sin tasa";
+				}
+
+				const margin = node.querySelector(".product-margin")!;
+				const markup = node.querySelector(".product-markup")!;
+				margin.textContent = formatPercent(product.profitMargin);
+				markup.textContent = formatPercent(product.profitMarkup);
+				margin.classList.toggle("is-primary", profitMode === "margin");
+				markup.classList.toggle("is-primary", profitMode === "markup");
 
 				const meta: string[] = [];
 				if (product.cupUnavailable) meta.push(`Falta la tasa para ${product.purchaseCurrency}.`);
-				if (product.profitUnavailable) meta.push("Compra y venta están en monedas distintas; el porcentaje no se calcula.");
-				if (product.rate && session?.role === 'admin') {
+				if (product.profitUnavailable) {
+					meta.push(`Falta la tasa para ${product.profitUnavailable.replace("no-rate-for-", "")}.`);
+				}
+				if (product.rate && session?.role === "admin") {
 					meta.push(`Tasa usada: ${product.rate.cupPerUnit} (${formatTime(product.rate.observedAt)}).`);
 				}
-				node.querySelector('.product-meta')!.textContent = meta.join(' ');
+				node.querySelector(".row-note")!.textContent = meta.join(" ");
 
 				productList.append(node);
+			}
+
+			if (listSummary) {
+				const withProfit = products.filter((product) => product.profitCup !== null);
+				if (withProfit.length === 0) {
+					listSummary.hidden = products.length === 0;
+					listSummary.textContent = products.length === 0 ? '' : 'Sin tasa registrada: todavía no se puede calcular la ganancia.';
+				} else {
+					const total = addCup(withProfit.map((product) => product.profitCup as string));
+					const negative = total.startsWith('-');
+					const amount = negative ? total.slice(1) : total;
+					const missing = products.length - withProfit.length;
+					listSummary.hidden = false;
+					listSummary.textContent =
+						`En esta página: ${negative ? 'pérdida' : 'ganancia'} de ${amount} CUP` +
+						(missing > 0 ? `, ${missing} producto(s) sin tasa para calcular.` : '.');
+					listSummary.classList.toggle('is-loss', negative);
+				}
 			}
 		}
 
@@ -507,14 +593,19 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				}
 			});
 
+			const cell = document.createElement('td');
+			cell.colSpan = 9;
+			cell.append(form);
 			card.textContent = '';
-			card.append(form);
+			card.append(cell);
 		}
 
-		async function loadData() {
+		type ProductPage = { products: Product[]; page: number; pageSize: number; total: number; pages: number };
+
+		async function loadData(page = currentPage) {
 			if (!session) return;
 			const [productsResponse, rateResponse, settingsResponse, currenciesResponse] = await Promise.all([
-				request<{ products: Product[] }>('/products', {}, session.token),
+				request<ProductPage>(`/products?page=${page}`, {}, session.token),
 				request<{ currency: string; rate: Rate | null }>('/rate', {}, session.token),
 				request<{ profitMode: 'margin' | 'markup' | null }>('/settings', {}, session.token),
 				request<{ currencies: string[] }>('/currencies', {}, session.token),
@@ -524,7 +615,18 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			fillCurrencies(currenciesResponse.currencies);
 			renderMode();
 			renderRate(rateResponse.rate);
+			currentPage = productsResponse.page;
+			totalPages = productsResponse.pages;
 			renderProducts(productsResponse.products);
+			renderPagination();
+		}
+
+		function renderPagination() {
+			if (!pagination || !pageInfo || !prevPage || !nextPage) return;
+			pagination.hidden = totalPages <= 1;
+			pageInfo.textContent = `Página ${currentPage} de ${totalPages}`;
+			prevPage.disabled = currentPage <= 1;
+			nextPage.disabled = currentPage >= totalPages;
 		}
 
 		function enterApp(next: Session) {
@@ -535,6 +637,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			if (welcomeTitle) welcomeTitle.textContent = `Hola, ${next.name}`;
 			const ratePanel = document.querySelector<HTMLElement>('#rate-panel');
 			if (ratePanel) ratePanel.hidden = next.role !== 'admin';
+			const modePanel = document.querySelector<HTMLElement>('#mode-panel');
+			if (modePanel) modePanel.hidden = next.role !== 'admin';
 			void loadData().catch(handleExpired);
 		}
 
@@ -584,6 +688,14 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		});
 
 		logoutButton?.addEventListener('click', leaveApp);
+
+		prevPage?.addEventListener('click', () => {
+			if (currentPage > 1) void loadData(currentPage - 1);
+		});
+
+		nextPage?.addEventListener('click', () => {
+			if (currentPage < totalPages) void loadData(currentPage + 1);
+		});
 
 		rateForm?.addEventListener('submit', async (event) => {
 			event.preventDefault();
@@ -661,7 +773,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 		productList?.addEventListener('click', async (event) => {
 			const target = event.target as HTMLElement;
-			const card = target.closest<HTMLElement>('.product-card');
+			const card = target.closest<HTMLElement>('.product-row');
 			if (!card || !session) return;
 
 			if (target.classList.contains('product-edit')) {
@@ -676,7 +788,12 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 			try {
 				await request(`/products/${id}`, { method: 'DELETE' }, session.token);
-				await loadData();
+				// Deleting the last item of a page must land on a page that still has content.
+				if (currentProducts.length === 1 && currentPage > 1) {
+					await loadData(currentPage - 1);
+				} else {
+					await loadData();
+				}
 			} catch (error) {
 				handleExpired(error);
 			}
@@ -746,6 +863,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		}
 
 		.login-view {
+			max-width: 72rem;
+			margin-inline: auto;
 			display: grid;
 			grid-template-columns: 1.1fr 0.9fr;
 			align-items: center;
@@ -917,6 +1036,25 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			margin-bottom: 0;
 		}
 
+		.day-caption {
+			margin: 0.9rem 0 0.1rem;
+			color: #3c4644;
+			font-size: 0.8125rem;
+			font-weight: 700;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+		}
+
+		.day-rate {
+			margin: 0 0 0.35rem;
+			color: #151a19;
+			font-size: clamp(2rem, 4vw, 2.75rem);
+			font-weight: 800;
+			letter-spacing: -0.03em;
+			line-height: 1;
+			font-variant-numeric: tabular-nums;
+		}
+
 		.panel-note {
 			margin-bottom: 0;
 			font-size: 0.875rem;
@@ -951,6 +1089,10 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 		.products-panel {
 			padding-bottom: 1.75rem;
+			padding-inline: clamp(0.75rem, 1.5vw, 1.5rem);
+			/* The table needs room; the rest of the page keeps its narrow reading width. */
+			width: min(100vw - 2rem, 104rem);
+			margin-inline: calc((100% - min(100vw - 2rem, 104rem)) / 2);
 		}
 
 		.panel-heading {
@@ -1050,6 +1192,99 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			margin-bottom: 0;
 		}
 
+		.table-wrap {
+			overflow-x: auto;
+			border: 1px solid var(--color-border);
+			border-radius: var(--radius-field);
+			background: var(--color-surface);
+		}
+
+		.product-table {
+			width: 100%;
+			border-collapse: collapse;
+			color: #151a19;
+			font-size: 0.9rem;
+		}
+
+		.product-table th,
+		.product-table td {
+			padding: 0.5rem 0.6rem;
+			text-align: left;
+			vertical-align: middle;
+			border-bottom: 1px solid var(--color-border);
+			white-space: normal;
+		}
+
+		.product-table th {
+			color: #151a19;
+			font-size: 0.8125rem;
+			font-weight: 700;
+			letter-spacing: 0.02em;
+			text-transform: uppercase;
+			background: #e9e5dc;
+			position: sticky;
+			top: 0;
+		}
+
+		.product-row:nth-child(even) td {
+			background: #f7f4ee;
+		}
+
+		.product-row:hover td {
+			background: #efe9dd;
+		}
+
+		.cell-name {
+			min-width: 12rem;
+			white-space: normal;
+		}
+
+		.product-name {
+			display: block;
+			margin: 0;
+			font-size: 1rem;
+			font-weight: 700;
+			color: #151a19;
+		}
+
+		.row-note {
+			display: block;
+			margin-top: 0.15rem;
+			color: #3c4644;
+			font-size: 0.75rem;
+			white-space: normal;
+		}
+
+		.cell-number {
+			font-variant-numeric: tabular-nums;
+			color: #151a19;
+			white-space: nowrap;
+		}
+
+		.product-result.is-loss {
+			color: #8a2c1e;
+			font-weight: 700;
+		}
+
+		.product-result {
+			color: #1c5a35;
+			font-weight: 700;
+		}
+
+		.product-margin.is-primary,
+		.product-markup.is-primary {
+			background: #dbe7f2;
+			font-weight: 700;
+		}
+
+		.cell-actions {
+			white-space: nowrap;
+		}
+
+		.cell-actions .link-button + .link-button {
+			margin-left: 0.75rem;
+		}
+
 		.product-list {
 			display: grid;
 			gap: 0.9rem;
@@ -1136,6 +1371,17 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			font-variant-numeric: tabular-nums;
 		}
 
+		.product-result {
+			margin: 0 0 0.5rem;
+			font-variant-numeric: tabular-nums;
+			font-weight: 700;
+			color: #2d5f3f;
+		}
+
+		.product-result.is-loss {
+			color: #8a2c1e;
+		}
+
 		.profit-pill.is-primary {
 			border-color: var(--color-accent);
 			background: var(--color-accent);
@@ -1150,6 +1396,36 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		.empty-state {
 			margin-bottom: 0;
 			padding-block: 1rem;
+		}
+
+		.pagination {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 0.75rem;
+			margin-top: 1.25rem;
+			padding-top: 1rem;
+			border-top: 1px solid var(--color-border);
+		}
+
+		.page-info {
+			margin: 0;
+			color: var(--color-muted);
+			font-variant-numeric: tabular-nums;
+		}
+
+		.list-summary {
+			margin: 0 0 0.9rem;
+			padding: 0.6rem 0.75rem;
+			border-left: 3px solid var(--color-accent);
+			background: var(--color-page);
+			font-variant-numeric: tabular-nums;
+			font-weight: 600;
+		}
+
+		.list-summary.is-loss {
+			border-left-color: #8a2c1e;
+			color: #8a2c1e;
 		}
 
 		@media (max-width: 52rem) {
