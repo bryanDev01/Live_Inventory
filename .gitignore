@@ -26,3 +26,7 @@ pnpm-debug.log*
 .neon
 # Local AI runtime state
 .atl/
+
+# Vercel local state
+.vercel/
+.vercel
