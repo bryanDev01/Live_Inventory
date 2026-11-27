@@ -804,8 +804,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 
 		function renderPagination() {
 			if (!pagination || !pageInfo || !prevPage || !nextPage) return;
-			// The controls stay visible as soon as there is data, so the person always sees where they are.
-			pagination.hidden = totalItems === 0;
+			// Hidden until there is a real second page; a single page needs no navigation.
+			pagination.hidden = totalPages <= 1;
 			const label = totalItems === 1 ? '1 producto' : `${totalItems} productos`;
 			pageInfo.textContent = `Página ${currentPage} de ${totalPages} · ${label}`;
 			prevPage.disabled = currentPage <= 1;
