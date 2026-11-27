@@ -17,5 +17,13 @@ export default defineConfig({
         REALTIME_SECRET: { value: process.env.NEON_REALTIME_SECRET, required: true },
       },
     },
+    api: {
+      name: "Inventory API",
+      source: "./api.ts",
+      env: {
+        APP_ORIGIN: { value: process.env.APP_ORIGIN, required: true },
+        ALLOWED_CURRENCIES: { value: process.env.ALLOWED_CURRENCIES, required: true },
+      },
+    },
   },
 });
