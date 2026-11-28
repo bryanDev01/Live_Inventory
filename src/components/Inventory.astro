@@ -140,6 +140,8 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 				<p class="empty-state" id="products-empty">Todavía no hay productos.</p>
 				<p class="list-summary" id="list-summary" hidden></p>
 
+				<p class="total-profit" id="total-profit" hidden></p>
+
 				<div class="table-wrap">
 					<table class="product-table">
 						<thead>
@@ -269,6 +271,7 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 		const nextPage = document.querySelector<HTMLButtonElement>('#next-page');
 		const listSummary = document.querySelector<HTMLElement>('#list-summary');
 		const productList = document.querySelector<HTMLTableSectionElement>('#product-list');
+		const totalProfit = document.querySelector<HTMLElement>('#total-profit');
 		const productsEmpty = document.querySelector<HTMLElement>('#products-empty');
 		const productCount = document.querySelector<HTMLElement>('#product-count');
 		const template = document.querySelector<HTMLTemplateElement>('#product-template');
@@ -781,7 +784,15 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			card.append(cell);
 		}
 
-		type ProductPage = { products: Product[]; page: number; pageSize: number; total: number; pages: number };
+		type ProductPage = {
+			products: Product[];
+			page: number;
+			pageSize: number;
+			total: number;
+			pages: number;
+			profitTotalCup: string;
+			profitTotalMissing: number;
+		};
 
 		async function loadData(page = currentPage) {
 			const [productsResponse, rateResponse, settingsResponse, currenciesResponse] = await Promise.all([
@@ -799,7 +810,19 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			totalPages = productsResponse.pages;
 			totalItems = productsResponse.total;
 			renderProducts(productsResponse.products);
+			renderTotalProfit(productsResponse.profitTotalCup, productsResponse.profitTotalMissing);
 			renderPagination();
+		}
+
+		function renderTotalProfit(total: string, missing: number) {
+			if (!totalProfit) return;
+			const negative = total.startsWith('-');
+			const amount = negative ? total.slice(1) : total;
+			const note = missing > 0 ? ` · ${missing} producto(s) sin tasa` : '';
+			const label = negative ? 'Pérdida total del inventario' : 'Ganancia total del inventario';
+			totalProfit.hidden = false;
+			totalProfit.textContent = `${label}: ${amount} CUP${note}`;
+			totalProfit.classList.toggle('is-loss', negative);
 		}
 
 		function renderPagination() {
@@ -1677,6 +1700,22 @@ const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'https://br-empty-heart-beae9nj
 			margin: 0 0 0.35rem;
 			color: #3c4644;
 			font-size: 0.8125rem;
+		}
+
+		.total-profit {
+			margin: 0 0 0.9rem;
+			padding: 0.7rem 0.9rem;
+			border-left: 4px solid var(--color-accent);
+			background: var(--color-surface);
+			color: #151a19;
+			font-size: 1.125rem;
+			font-variant-numeric: tabular-nums;
+			font-weight: 800;
+		}
+
+		.total-profit.is-loss {
+			border-left-color: #8a2c1e;
+			color: #8a2c1e;
 		}
 
 		.pagination {
