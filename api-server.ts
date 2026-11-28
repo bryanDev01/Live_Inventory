@@ -382,7 +382,65 @@ async function productsPayload(requestedPage = 1): Promise<ProductPage> {
 		};
 	});
 
-	return { products, page, pageSize: PAGE_SIZE, total, pages };
+	const totalProfit = await inventoryTotalProfit();
+
+	return {
+		products,
+		page,
+		pageSize: PAGE_SIZE,
+		total,
+		pages,
+		profitTotalCup: totalProfit.total,
+		profitTotalMissing: totalProfit.missing,
+	};
+}
+
+function toCents(value: string): bigint {
+	const negative = value.startsWith("-");
+	const clean = negative ? value.slice(1) : value;
+	const [whole, fraction = ""] = clean.split(".");
+	const cents = BigInt(whole) * 100n + BigInt((fraction + "00").slice(0, 2));
+	return negative ? -cents : cents;
+}
+
+function fromCents(cents: bigint): string {
+	const negative = cents < 0n;
+	const absolute = negative ? -cents : cents;
+	const whole = absolute / 100n;
+	const fraction = String(absolute % 100n).padStart(2, "0");
+	return `${negative ? "-" : ""}${whole}.${fraction}`;
+}
+
+// Total profit of the whole inventory in CUP, across every product, not only the current page.
+async function inventoryTotalProfit(): Promise<{ total: string; missing: number }> {
+	const { rows } = await queryRead<ProductRow>(
+		`select id, name, purchase_amount, purchase_currency, sale_amount, sale_currency, profit_limit from product`,
+	);
+	if (rows.length === 0) return { total: "0.00", missing: 0 };
+
+	const currencies = [...new Set(rows.flatMap((row) => [row.purchase_currency, row.sale_currency]))];
+	const rates = await latestRates(currencies);
+
+	const convert = (amount: string, currency: string): Decimal | null => {
+		if (currency === "CUP") return parseDecimal(amount);
+		const record = rates.get(currency);
+		return record ? multiplyDecimals(amount, record.exact) : null;
+	};
+
+	let cents = 0n;
+	let missing = 0;
+
+	for (const row of rows) {
+		const cost = convert(String(row.purchase_amount), row.purchase_currency);
+		const sale = convert(String(row.sale_amount), row.sale_currency);
+		if (!cost || !sale) {
+			missing += 1;
+			continue;
+		}
+		cents += toCents(formatDecimal(subtractDecimals(sale, cost)));
+	}
+
+	return { total: fromCents(cents), missing };
 }
 
 async function listProducts(request: Request, headers: Record<string, string>): Promise<Response> {
